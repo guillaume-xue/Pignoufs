@@ -53,7 +53,7 @@ int main(int argc, char *argv[])
   {
     cmd_cp(argc, argv);
   }
-  else if (strcat(command, "rm") == 0)
+  else if (strcmp(command, "rm") == 0)
   {
     cmd_rm(argc, argv);
   }
@@ -65,7 +65,7 @@ int main(int argc, char *argv[])
   {
     cmd_chmod(argc, argv);
   }
-  else if (strcat(command, "cat") == 0)
+  else if (strcmp(command, "cat") == 0)
   {
     cmd_cat(argc, argv);
   }
