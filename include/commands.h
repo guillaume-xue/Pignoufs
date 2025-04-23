@@ -1,7 +1,9 @@
 #ifndef COMMANDS_H
 #define COMMANDS_H
 
+
 void cmd_mkfs(int argc, char *argv[]);
+void cmd_touch(int argc, char *argv[]);
 void cmd_ls(int argc, char *argv[]);
 void cmd_df(int argc, char *argv[]);
 void cmd_cp(int argc, char *argv[]);

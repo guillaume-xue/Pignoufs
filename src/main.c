@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include "../include/commands.h"
 
-void print_usage()
+static void print_usage()
 {
   fprintf(stderr, "Usage: <nom_de_commande> <fsname> [options]\n");
   fprintf(stderr, "Commandes disponibles : mkfs, ls, df, cp, rm, lock, chmod, cat, input, add, addinput, fsck, mount.\n");
@@ -40,6 +40,10 @@ int main(int argc, char *argv[])
   if (strcmp(command, "mkfs") == 0)
   {
     cmd_mkfs(argc, argv);
+  }
+  else if (strcmp(command, "touch") == 0)
+  {
+    cmd_touch(argc, argv);
   }
   else if (strcmp(command, "ls") == 0)
   {
