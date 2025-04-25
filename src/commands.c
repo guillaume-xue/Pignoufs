@@ -1,12 +1,63 @@
 #include "../include/structures.h"
-#include <endian.h> // Ajout pour les conversions endian
-#include <math.h> // Ajout pour utiliser ceil
 
-static void compute_sha1(const void *data, size_t len, uint8_t *out) {
+static void calcul_sha1(const void *data, size_t len, uint8_t *out) {
   SHA_CTX ctx;
   SHA1_Init(&ctx);
   SHA1_Update(&ctx, data, len);
   SHA1_Final(out, &ctx);
+}
+
+static void get_conteneur_data(uint8_t *map, int32_t *nb1, int32_t *nbi, int32_t *nba) {
+  struct pignoufs *sb = (struct pignoufs *)map;
+  *nbi = sb->nb_i;
+  *nba = sb->nb_a;
+  int32_t nbb = sb->nb_b;
+  *nb1 = (nbb + 31999) / 32000;
+}
+
+static void init_inode(struct inode *in, const char *name) {
+  time_t now = time(NULL);
+  in->flags = (1<<0) /* existence */
+  | (1<<1) /* permission de lecture */
+  | (1<<2) /* permission d'écriture */;
+  in->file_size = 0;
+  in->creation_time = now;
+  in->access_time = now;
+  in->modification_time = now;
+  strncpy(in->filename, name, sizeof(in->filename) - 1);
+  in->filename[sizeof(in->filename) - 1] = '\0';
+  for (int i = 0; i < 900; i++) in->direct_blocks[i] = -1;
+  in->double_indirect_block = -1;
+  memset(in->extensions, 0, sizeof in->extensions);
+  calcul_sha1(in, 4000, in->sha1);
+  in->type = 3;
+}
+
+static int open_fs(const char *fsname, uint8_t **mapp, size_t *sizep) {
+  int fd = open(fsname, O_RDWR);
+  if (fd < 0) { perror("open"); return -1; }
+  struct stat st;
+  if (fstat(fd, &st) < 0) { perror("fstat"); close(fd); return -1; }
+  *sizep = st.st_size;
+  *mapp = mmap(NULL, st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  if (*mapp == MAP_FAILED) { perror("mmap"); close(fd); return -1; }
+  return fd;
+}
+
+static void close_fs(int fd, uint8_t *map, size_t size) {
+  msync(map, size, MS_SYNC);
+  munmap(map, size);
+  close(fd);
+}
+
+static void bitmap_alloc(uint8_t *map, int32_t blknum) {
+  int32_t idx = blknum / 32000;
+  int32_t bit = blknum % 32000;
+  uint8_t *blk = map + (1 + idx) * 4096;
+  struct bitmap_block *bb = (struct bitmap_block *)blk;
+  bb->bits[bit / 8] &= ~(1 << (bit % 8));
+  calcul_sha1(bb->bits, 4000, bb->sha1);
+  bb->type = 2;
 }
 
 void cmd_mkfs(int argc, char *argv[])
@@ -50,7 +101,7 @@ void cmd_mkfs(int argc, char *argv[])
   sb->nb_f = htole32(0);
   // SHA1 + type
   uint8_t *raw0 = (uint8_t *)map;
-  compute_sha1(raw0, 4000, raw0 + 4000);
+  calcul_sha1(raw0, 4000, raw0 + 4000);
   struct bitmap_block *sig0 = (struct bitmap_block *)(raw0 + 4000);
   sig0->type = htole32(1);
 
@@ -65,7 +116,7 @@ void cmd_mkfs(int argc, char *argv[])
           if (b >= 1 + nb1 && b < nbb)
               bb->bits[j/8] |= (1 << (j%8));
       }
-      compute_sha1(bb->bits, 4000, bb->sha1);
+      calcul_sha1(bb->bits, 4000, bb->sha1);
       bb->type = htole32(2);
   }
 
@@ -73,7 +124,7 @@ void cmd_mkfs(int argc, char *argv[])
   for (int32_t i = 0; i < nbi; i++) {
       struct inode *in = (struct inode *)((uint8_t *)map + (1 + nb1 + i) * 4096);
       memset(in, 0, sizeof(*in)); // marquer l'inode comme libre
-      compute_sha1(in, 4000, in->sha1);
+      calcul_sha1(in, 4000, in->sha1);
       in->type = htole32(3);
   }
 
@@ -81,7 +132,7 @@ void cmd_mkfs(int argc, char *argv[])
   for (int32_t i = 0; i < nba; i++) {
       struct data_block *db = (struct data_block *)((uint8_t *)map + (1 + nb1 + nbi + i) * 4096);
       memset(db->data, 0, sizeof(db->data));
-      compute_sha1(db->data, 4000, db->sha1);
+      calcul_sha1(db->data, 4000, db->sha1);
       db->type = htole32(5);
   }
 
@@ -95,12 +146,104 @@ void cmd_mkfs(int argc, char *argv[])
 
 void cmd_touch(int argc, char *argv[])
 {
-  printf("Exécution de la commande touch\n");
+  const char *fsname = argv[1];
+  const char *filename = argv[2];
+  if (strncmp(filename, "//", 2) != 0) {
+      fprintf(stderr, "Erreur: Le nom de fichier interne doit commencer par \"//\".\n");
+      return;
+  }
+  filename += 2;
+
+  uint8_t *map;
+  size_t size;
+  int fd = open_fs(fsname, &map, &size);
+
+  int32_t nb1, nbi, nba;
+  get_conteneur_data(map, &nb1, &nbi, &nba);
+  struct pignoufs *sb = (struct pignoufs *)map;
+  int32_t base = 1 + nb1;
+  int32_t free_idx = -1;
+
+  // Scan inodes
+  for (int i = 0; i < nbi; i++) {
+      struct inode *in = (struct inode *)(map + (base + i) * 4096);
+      if (in->flags & 1) {
+          if (strcmp(in->filename, filename) == 0) {
+              in->modification_time = time(NULL);
+              calcul_sha1(in, 4000, in->sha1);
+              close_fs(fd, map, size);
+              return 0;
+          }
+      } else if (free_idx < 0) {
+          free_idx = i;
+      }
+  }
+  if (free_idx < 0) {
+      fprintf(stderr, "touch: aucun inode libre disponible\n");
+      close_fs(fd, map, size);
+      return -1;
+  }
+
+  // Initialiser l'inode et l'allouer dans le bitmap
+  struct inode *in = (struct inode *)(map + (base + free_idx) * 4096);
+  init_inode(in, filename);
+  int32_t inode_blk = base + free_idx;
+  bitmap_alloc(map, inode_blk);
+
+  // Mettre à jour les compteurs du superbloc et son SHA1
+  sb->nb_l -= 1;
+  sb->nb_f += 1;
+  calcul_sha1(map, 4000, map + 4000);
+
+  close_fs(fd, map, size);
+  return 0;
 }
 
 void cmd_ls(int argc, char *argv[])
 {
-  printf("Exécution de la commande ls\n");
+  const char *fsname = argv[1];
+  const char *filename = NULL;
+  if (argc > 2) {
+      filename = argv[2];
+      if (strncmp(filename, "//", 2) != 0) {
+          fprintf(stderr, "Erreur: Le nom de fichier interne doit commencer par \"//\".\n");
+          return;
+      }
+      filename += 2;
+  }
+
+  uint8_t *map;
+  size_t size;
+  int fd = open_fs(fsname, &map, &size);
+  if (fd < 0) return -1;
+
+  int32_t nb1, nbi, nba;
+  get_conteneur_data(map, &nb1, &nbi, &nba);
+  struct pignoufs *sb = (struct pignoufs *)map;
+  int32_t base = 1 + nb1;
+  int found = 0;
+
+  for (int i = 0; i < nbi; i++) {
+      struct inode *in = (struct inode *)(map + (base + i) * 4096);
+      if (in->flags & 1) {
+          if (filename) {
+              if (strcmp(in->filename, filename) == 0) {
+                  printf("%s existe\n", filename);
+                  found = 1;
+                  break;
+              }
+          } else {
+              printf("%s\n", in->filename);
+          }
+      }
+  }
+  if (filename && !found) {
+      printf("%s introuvable\n", filename);
+      close_fs(fd, map, size);
+      return -1;
+  }
+  close_fs(fd, map, size);
+  return 0;
 }
 
 void cmd_df(int argc, char *argv[])
