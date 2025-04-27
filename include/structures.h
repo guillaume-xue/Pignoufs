@@ -13,6 +13,7 @@
 #include <time.h>
 #include <endian.h>
 #include <math.h>
+#include <stdbool.h>
 
 struct pignoufs
 {

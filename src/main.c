@@ -36,6 +36,15 @@ int main(int argc, char *argv[])
     }
   }
 
+  if (argc > 1)
+  {
+    if (strncmp(argv[1], "//", 2) == 0)
+    {
+      fprintf(stderr, "Erreur : '%s' n'est pas un format valide\n", argv[1]);
+      return 1;
+    }
+  }
+
   // Appeler la commande correspondante
   if (strcmp(command, "mkfs") == 0)
   {
