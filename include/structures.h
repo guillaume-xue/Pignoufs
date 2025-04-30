@@ -21,8 +21,8 @@ struct pignoufs
   int32_t nb_b;    // Nombre total de blocs (little-endian)
   int32_t nb_i;    // Nombre d'inodes (little-endian)
   int32_t nb_a;    // Nombre de blocs allouables (little-endian)
-  int32_t nb_l;    // Nombre de blocs libres (little-endian)
-  int32_t nb_f;    // Nombre de fichiers stockés (little-endian)
+  int32_t nb_l;    // Nombre de blocs allouables libres (little-endian)
+  int32_t nb_f;    // Nombre de fichiers stockés = inodes alloués (little-endian)
   char zero[3972]; // Padding pour atteindre 4000 octets
 };
 

@@ -39,7 +39,6 @@ links: $(BIN_DIR)/pignoufs
 	ln -sf $(BIN_DIR)/pignoufs addinput
 	ln -sf $(BIN_DIR)/pignoufs fsck
 	ln -sf $(BIN_DIR)/pignoufs mount
-	ln -sf $(BIN_DIR)/pignoufs touch
 
 $(BIN_DIR)/%.o: $(SRC_DIR)/%.c | $(BIN_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -52,6 +51,6 @@ $(BIN_DIR):
 
 clean:
 	rm -rf $(BIN_DIR)
-	rm -f mkfs ls df cp rm lock chmod cat input add addinput fsck mount touch
+	rm -f mkfs ls df cp rm lock chmod cat input add addinput fsck mount
 
 .PHONY: all clean links

@@ -1,94 +1,5 @@
 #include "../include/structures.h"
-
-// Calcul SHA1 d'un bloc de données
-static void calcul_sha1(const void *data, size_t len, uint8_t *out)
-{
-  SHA_CTX ctx;
-  SHA1_Init(&ctx);
-  SHA1_Update(&ctx, data, len);
-  SHA1_Final(out, &ctx);
-}
-
-// Récupération des données du conteneur
-static void get_conteneur_data(uint8_t *map, int32_t *nb1, int32_t *nbi, int32_t *nba)
-{
-  struct pignoufs *sb = (struct pignoufs *)map;
-  *nbi = le32toh(sb->nb_i);
-  *nba = le32toh(sb->nb_a);
-  *nb1 = le32toh(sb->nb_b) - 1 - *nbi - *nba;
-}
-
-// Initialisation d'un inode, fichier simple pour l'instant
-static void init_inode(struct inode *in, const char *name, bool type)
-{
-  time_t now = time(NULL);
-  in->flags = htole32((1 << 0)        /* existence */
-                      | (1 << 1)      /* permission de lecture */
-                      | (1 << 2)      /* permission d'écriture */
-                      | (0 << 3)      /* verrouillage en lecture */
-                      | (0 << 4)      /* verrouillage en écriture */
-                      | (type << 5)); /* 0 fichier, 1 répertoire */
-  in->file_size = htole32(0);
-  in->creation_time = htole32(now);
-  in->access_time = htole32(now);
-  in->modification_time = htole32(now);
-  strncpy(in->filename, name, sizeof(in->filename) - 1);
-  in->filename[sizeof(in->filename) - 1] = '\0';
-  for (int i = 0; i < 900; i++)
-  {
-    in->direct_blocks[i] = htole32(-1);
-  }
-  in->double_indirect_block = htole32(-1);
-  memset(in->extensions, 0, sizeof in->extensions);
-  calcul_sha1(in, 4000, in->sha1);
-  in->type = htole32(3);
-}
-
-// Ouverture du système de fichiers et projection en mémoire
-static int open_fs(const char *fsname, uint8_t **mapp, size_t *sizep)
-{
-  int fd = open(fsname, O_RDWR);
-  if (fd < 0)
-  {
-    perror("open");
-    return -1;
-  }
-  struct stat st;
-  if (fstat(fd, &st) < 0)
-  {
-    perror("fstat");
-    close(fd);
-    return -1;
-  }
-  *sizep = st.st_size;
-  *mapp = mmap(NULL, st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-  if (*mapp == MAP_FAILED)
-  {
-    perror("mmap");
-    close(fd);
-    return -1;
-  }
-  return fd;
-}
-
-// Fermeture du système de fichiers et synchronisation
-static void close_fs(int fd, uint8_t *map, size_t size)
-{
-  msync(map, size, MS_SYNC);
-  munmap(map, size);
-  close(fd);
-}
-
-static void bitmap_alloc(uint8_t *map, int32_t blknum)
-{
-  int32_t idx = blknum / 32000;
-  int32_t bit = blknum % 32000;
-  uint8_t *blk = map + (1 + idx) * 4096;
-  struct bitmap_block *bb = (struct bitmap_block *)blk;
-  bb->bits[bit / 8] &= ~(1 << (bit % 8));
-  calcul_sha1(bb->bits, 4000, bb->sha1);
-  bb->type = htole32(2); // Convert to little endian
-}
+#include "../include/utilitaires.h"
 
 // Fonction de création du système de fichiers (mkfs)
 void cmd_mkfs(int argc, char *argv[])
@@ -136,7 +47,8 @@ void cmd_mkfs(int argc, char *argv[])
     perror("open");
     return EXIT_FAILURE;
   }
-  off_t filesize = (off_t)nbb * 4096;
+  uint64_t filesize = (uint64_t)nbb * 4096;
+
   if (ftruncate(fd, filesize) < 0)
   {
     perror("ftruncate");
@@ -158,7 +70,7 @@ void cmd_mkfs(int argc, char *argv[])
   sb->nb_b = htole32(nbb);
   sb->nb_i = htole32(nbi);
   sb->nb_a = htole32(nba);
-  sb->nb_l = htole32(nba + nbi);
+  sb->nb_l = htole32(nba);
   sb->nb_f = htole32(0);
   // SHA1 + type
   uint8_t *sha1 = (uint8_t *)map;
@@ -169,7 +81,7 @@ void cmd_mkfs(int argc, char *argv[])
   // 2) Blocs de bitmap
   for (int32_t i = 0; i < nb1; i++)
   {
-    struct bitmap_block *bb = (struct bitmap_block *)((uint8_t *)map + (i + 1) * 4096);
+    struct bitmap_block *bb = (struct bitmap_block *)((uint8_t *)map + (uint64_t)(i + 1) * 4096);
     // Réinitialisation des bits
     memset(bb->bits, 0, sizeof(bb->bits));
     int32_t base = i * 32000;
@@ -186,7 +98,7 @@ void cmd_mkfs(int argc, char *argv[])
   // 3) Blocs d'inodes
   for (int32_t i = 0; i < nbi; i++)
   {
-    struct inode *in = (struct inode *)((uint8_t *)map + (1 + nb1 + i) * 4096);
+    struct inode *in = (struct inode *)((uint8_t *)map + (uint64_t)(1 + nb1 + i) * 4096);
     memset(in, 0, sizeof(*in)); // marquer l'inode comme libre
     calcul_sha1(in, 4000, in->sha1);
     in->type = htole32(3);
@@ -195,10 +107,10 @@ void cmd_mkfs(int argc, char *argv[])
   // 4) Blocs de données
   for (int32_t i = 0; i < nba; i++)
   {
-    struct data_block *db = (struct data_block *)((uint8_t *)map + (1 + nb1 + nbi + i) * 4096);
+    struct data_block *db = (struct data_block *)((uint8_t *)map + (uint64_t)(1 + nb1 + nbi + i) * 4096);
     memset(db->data, 0, sizeof(db->data));
     calcul_sha1(db->data, 4000, db->sha1);
-    db->type = htole32(5);
+    db->type = htole32(4);
   }
 
   msync(map, filesize, MS_SYNC);
@@ -207,68 +119,6 @@ void cmd_mkfs(int argc, char *argv[])
 
   printf("Système de fichiers %s créé avec %d inodes et %d blocs allouables.\n", fsname, nbi, nba);
   printf("Nombre total de blocs : %d\n", nbb);
-}
-
-void cmd_touch(int argc, char *argv[])
-{
-  const char *fsname = argv[1];
-  const char *filename = argv[2];
-  if (strncmp(filename, "//", 2) != 0)
-  {
-    fprintf(stderr, "Erreur: Le nom de fichier interne doit commencer par \"//\".\n");
-    return;
-  }
-  filename += 2;
-
-  uint8_t *map;
-  size_t size;
-  int fd = open_fs(fsname, &map, &size);
-
-  int32_t nb1, nbi, nba;
-  get_conteneur_data(map, &nb1, &nbi, &nba);
-  struct pignoufs *sb = (struct pignoufs *)map;
-  int32_t base = 1 + nb1;
-  int32_t free_idx = -1;
-
-  // Scan inodes
-  for (int i = 0; i < nbi; i++)
-  {
-    struct inode *in = (struct inode *)(map + (base + i) * 4096);
-    if (in->flags & 1)
-    {
-      if (strcmp(in->filename, filename) == 0)
-      {
-        in->modification_time = time(NULL);
-        calcul_sha1(in, 4000, in->sha1);
-        close_fs(fd, map, size);
-        return 0;
-      }
-    }
-    else if (free_idx < 0)
-    {
-      free_idx = i;
-    }
-  }
-  if (free_idx < 0)
-  {
-    fprintf(stderr, "touch: aucun inode libre disponible\n");
-    close_fs(fd, map, size);
-    return -1;
-  }
-
-  // Initialiser l'inode et l'allouer dans le bitmap
-  struct inode *in = (struct inode *)(map + (base + free_idx) * 4096);
-  init_inode(in, filename, false);
-  int32_t inode_blk = base + free_idx;
-  bitmap_alloc(map, inode_blk);
-
-  // Mettre à jour les compteurs du superbloc et son SHA1
-  sb->nb_l -= 1;
-  sb->nb_f += 1;
-  calcul_sha1(map, 4000, map + 4000);
-
-  close_fs(fd, map, size);
-  return 0;
 }
 
 void cmd_ls(int argc, char *argv[])
@@ -292,17 +142,18 @@ void cmd_ls(int argc, char *argv[])
   if (fd < 0)
     return -1;
 
-  int32_t nb1, nbi, nba;
-  get_conteneur_data(map, &nb1, &nbi, &nba);
+  int32_t nb1, nbi, nba, nbb;
+  get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
   struct pignoufs *sb = (struct pignoufs *)map;
+  uint32_t nbl = le32toh(sb->nb_l), nbf = le32toh(sb->nb_f);
   int32_t base = 1 + nb1;
   int found = 0;
-
   for (int i = 0; i < nbi; i++)
   {
-    struct inode *in = (struct inode *)(map + (base + i) * 4096);
+    struct inode *in = (struct inode *)(map + (uint64_t)(base + i) * 4096);
     if (in->flags & 1)
     {
+
       if (filename)
       {
         if (strcmp(in->filename, filename) == 0)
@@ -312,7 +163,7 @@ void cmd_ls(int argc, char *argv[])
           perm[1] = (in->flags & (1 << 2)) ? 'w' : '-';
           perm[2] = (in->flags & (1 << 3)) ? 'l' : '-';
           perm[3] = (in->flags & (1 << 4)) ? 'l' : '-';
-
+          // printf("here\n");
           time_t mod_time = (time_t)in->modification_time;
           struct tm tm_buf;
           struct tm *tm = localtime_r(&mod_time, &tm_buf);
@@ -382,17 +233,236 @@ void cmd_chmod(int argc, char *argv[])
 
 void cmd_cat(int argc, char *argv[])
 {
-  printf("Exécution de la commande cat\n");
+  const char *fsname = argv[1];
+  const char *filename = argv[2];
+  if (strncmp(filename, "//", 2) != 0)
+  {
+    fprintf(stderr, "Erreur: Le nom de fichier interne doit commencer par \"//\".\n");
+    return;
+  }
+  filename += 2;
+
+  uint8_t *map;
+  size_t size;
+  int fd = open_fs(fsname, &map, &size);
+  if (fd < 0)
+    return -1;
+
+  int32_t nb1, nbi, nba, nbb;
+  get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
+  struct inode *in = find_inode(map, nb1, nbi, filename);
+  if (!in || !(le32toh(in->flags) & 1))
+  {
+    printf("%s non trouvé\n", filename);
+    close_fs(fd, map, size);
+    return;
+  }
+
+  uint32_t file_size = le32toh(in->file_size);
+  uint32_t remaining_data = file_size;
+
+  // 1) Direct blocs
+  for (int i = 0; i < 900 && remaining_data > 0; i++)
+  {
+    uint64_t b = le32toh(in->direct_blocks[i]);
+    if (b < 0)
+      break;
+    uint64_t *data_position = map + (uint64_t)b * 4096;
+    uint64_t buffer = remaining_data < 4000 ? remaining_data : 4000;
+    write(STDOUT_FILENO, data_position, buffer);
+    remaining_data -= buffer;
+  }
+
+  if (remaining_data == 0)
+  {
+    goto end;
+  }
+
+  // 2) Simple/Doucle indirect blocs
+  int32_t dib = le32toh(in->double_indirect_block);
+  if (dib < 0)
+  {
+    goto end;
+  }
+  printf("dib = %d\n", dib);
+  struct address_block *dbl = (struct address_block *)(map + (uint64_t)dib * 4096);
+  printf("dbl = %p\n", dbl);
+  printf("dbl->type = %d\n", le32toh(dbl->type));
+  if(le32toh(dbl->type) == 6){
+    for (int i = 0; i < 1000 && remaining_data > 0; i++)
+    {
+      int32_t db = le32toh(dbl->addresses[i]);
+      if (db < 0)
+        break;
+      uint64_t *data_position2 = map + (uint64_t)db * 4096;
+      uint32_t buffer = remaining_data < 4000 ? remaining_data : 4000;
+      write(STDOUT_FILENO, data_position2, buffer);
+      remaining_data -= buffer;
+    }
+    goto end;
+  }else{
+    for (int i = 0; i < 1000 && remaining_data > 0; i++)
+    {
+      uint32_t db = le32toh(dbl->addresses[i]);
+      if (db < 0)
+        break;
+      uint64_t *data_position2 = map + (uint64_t)db * 4096;
+      struct address_block *ab2 = (struct address_block *)data_position2;
+      for (int j = 0; j < 1000 && remaining_data > 0; j++)
+      {
+        uint32_t db2 = le32toh(ab2->addresses[j]);
+        if (db2 < 0)
+          break;
+        uint64_t *data_position3 = map + (uint64_t)db2 * 4096;
+        uint32_t buffer = remaining_data < 4000 ? remaining_data : 4000;
+        write(STDOUT_FILENO, data_position3, buffer);
+        remaining_data -= buffer;
+      }
+    }
+    end:
+    close_fs(fd, map, size);
+    return;
+  }
+  close_fs(fd, map, size);
 }
 
 void cmd_input(int argc, char *argv[])
 {
-  printf("Exécution de la commande input\n");
+  const char *fsname = argv[1];
+  const char *filename = argv[2];
+  if (strncmp(filename, "//", 2) != 0)
+  {
+    fprintf(stderr, "Erreur: Le nom de fichier interne doit commencer par \"//\".\n");
+    return;
+  }
+  filename += 2;
+
+  uint8_t *map;
+  size_t size;
+  int fd = open_fs(fsname, &map, &size);
+  if (fd < 0)
+    return -1;
+
+  int32_t nb1, nbi, nba, nbb;
+  get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
+  struct inode *in = find_inode(map, nb1, nbi, filename);
+  if (!in)
+  {
+    int status = create_file(map, filename);
+    if (status == -1)
+    {
+      return -1;
+    }
+    in = find_inode(map, nb1, nbi, filename);
+  }else{
+    dealloc_data_block(in, map);
+  }
+
+  struct pignoufs *sb = (struct pignoufs *)map;
+
+  char buf[4000]; 
+  size_t r;
+  uint32_t total = in->file_size;
+  while ((r = read(STDIN_FILENO, buf, 4000)) > 0)
+  {
+    uint32_t offset = (in->file_size % 4000);
+    if (offset > 0) {
+      int32_t last = get_last_data_block(map,in,nb1,nbi,nba,nbb);
+      struct data_block *db = (struct data_block *)(map + (uint64_t)last * 4096);
+      memcpy(db->data+offset, buf, r);
+      calcul_sha1(db->data, 4000, db->sha1);
+      total += r;
+      in->file_size = total;
+    }else{
+      uint32_t b = get_last_data_block_null(map,in,nb1,nbi,nba,nbb);
+      if (b == -2) {
+        perror("Erreur: pas de blocs de données libres disponibles\n");
+        break;
+      }
+      struct data_block *db = (struct data_block *)(map + (uint64_t)b * 4096);
+  
+      memcpy(db->data, buf, r);
+      calcul_sha1(db->data, 4000, db->sha1);
+      db->type = 5;
+      total += r;
+      in->file_size = total;
+    }
+  }
+  in->file_size = htole32(total);
+  in->modification_time = htole32(time(NULL));
+  calcul_sha1(in, 4000, in->sha1);
+  close_fs(fd, map, size);
+  return 0;
 }
 
-void cmd_add(int argc, char *argv[])
+int cmd_add(int argc, char *argv[])
 {
-  printf("Exécution de la commande add\n");
+  const char *fsname = argv[1];
+  const char *filename_ext = argv[2];
+  const char *filename_int = argv[3];
+
+  uint8_t *map;
+  size_t size;
+  int fd = open_fs(fsname, &map, &size);
+  if (fd < 0)
+    return -1;
+
+  int32_t nb1, nbi, nba, nbb;
+  get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
+  struct pignoufs *sb = (struct pignoufs *)map;
+  int inf = open(filename_ext, O_RDONLY);
+
+  if (inf < 0)
+  {
+    perror("open source");
+    return;
+  }
+
+  struct inode *in = find_inode(map, nb1, nbi, filename_int);
+  if (!in)
+  {
+    int status = create_file(map, filename_int);
+    if (status == -1)
+    {
+      return -1;
+    }
+    in = find_inode(map, nb1, nbi, filename_int);
+  }
+  uint32_t offset = (in->file_size % 4000);
+  char buf[4000]; size_t r; uint32_t total = in->file_size;
+  if (offset > 0) {
+    int32_t last = get_last_data_block(map,in,nb1,nbi,nba,nbb);
+    r = read(inf, buf, 4000-offset);
+    struct data_block *db = (struct data_block *)(map + (uint64_t)last * 4096);
+    memcpy(db->data+offset, buf, r);
+    calcul_sha1(db->data, 4000, db->sha1);
+    total += r;
+    in->file_size = total;
+    
+  }
+
+  while ((r = read(inf, buf, 4000)) > 0) {
+    uint32_t b = get_last_data_block_null(map,in,nb1,nbi,nba,nbb);
+    if (b == -2) {
+      perror("Erreur: pas de blocs de données libres disponibles\n");
+      break;
+    }
+    
+    struct data_block *db = (struct data_block *)(map + (uint64_t)b * 4096);
+    memset(db->data, 0, sizeof(db->data));
+    memcpy(db->data, buf, r);
+    calcul_sha1(db->data, 4000, db->sha1);
+    db->type = 5;
+    total += r;
+    in->file_size = total;
+  }
+  in->file_size = total;
+  in->modification_time = htole32(time(NULL));
+  calcul_sha1(in, 4000, in->sha1);
+  close_fs(fd, map, size);
+  close(inf);
+
+  return 0;
 }
 
 void cmd_addinput(int argc, char *argv[])
