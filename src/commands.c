@@ -2,29 +2,8 @@
 #include "../include/utilitaires.h"
 
 // Fonction de création du système de fichiers (mkfs)
-void cmd_mkfs(int argc, char *argv[])
+int cmd_mkfs(const char *fsname, int nbi, int nba)
 {
-  const char *fsname = argv[1];
-  if (argc < 4)
-  {
-    fprintf(stderr, "Usage: mkfs <fsname> <nbi> <nba>\n");
-    return;
-  }
-  char *endptr;
-  int32_t nbi = strtol(argv[2], &endptr, 10);
-  if (*endptr != '\0')
-  {
-    fprintf(stderr, "Erreur: %s n'est pas un nombre valide.\n", argv[2]);
-    return;
-  }
-
-  int32_t nba = strtol(argv[3], &endptr, 10);
-  if (*endptr != '\0')
-  {
-    fprintf(stderr, "Erreur: %s n'est pas un nombre valide.\n", argv[3]);
-    return;
-  }
-
   // Calcul initial du nombre de blocs
   int32_t nb1 = (int32_t)ceil((1 + nbi + nba) / 32000.0);
   int32_t nbb = 1 + nb1 + nbi + nba;
@@ -45,14 +24,14 @@ void cmd_mkfs(int argc, char *argv[])
   if (fd < 0)
   {
     perror("open");
-    return EXIT_FAILURE;
+    return 1;
   }
   uint64_t filesize = (uint64_t)nbb * 4096;
 
   if (ftruncate(fd, filesize) < 0)
   {
     perror("ftruncate");
-    return EXIT_FAILURE;
+    return 1;
   }
 
   // Projection de tout le conteneur en mémoire
@@ -60,7 +39,7 @@ void cmd_mkfs(int argc, char *argv[])
   if (map == MAP_FAILED)
   {
     perror("mmap");
-    return EXIT_FAILURE;
+    return 1;
   }
 
   // 1) Superbloc
@@ -119,33 +98,20 @@ void cmd_mkfs(int argc, char *argv[])
 
   printf("Système de fichiers %s créé avec %d inodes et %d blocs allouables.\n", fsname, nbi, nba);
   printf("Nombre total de blocs : %d\n", nbb);
+  return 0;
 }
 
-void cmd_ls(int argc, char *argv[])
+int cmd_ls(const char *fsname, const char *filename)
 {
-  const char *fsname = argv[1];
-  const char *filename = NULL;
-  if (argc > 2)
-  {
-    filename = argv[2];
-    if (strncmp(filename, "//", 2) != 0)
-    {
-      fprintf(stderr, "Erreur: Le nom de fichier interne doit commencer par \"//\".\n");
-      return;
-    }
-    filename += 2;
-  }
-
   uint8_t *map;
   size_t size;
   int fd = open_fs(fsname, &map, &size);
   if (fd < 0)
-    return -1;
+    return 1;
 
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
-  struct pignoufs *sb = (struct pignoufs *)map;
-  uint32_t nbl = le32toh(sb->nb_l), nbf = le32toh(sb->nb_f);
+
   int32_t base = 1 + nb1;
   int found = 0;
   for (int i = 0; i < nbi; i++)
@@ -189,20 +155,19 @@ void cmd_ls(int argc, char *argv[])
   {
     printf("%s introuvable\n", filename);
     close_fs(fd, map, size);
-    return -1;
+    return 1;
   }
   close_fs(fd, map, size);
   return 0;
 }
 
-void cmd_df(int argc, char *argv[])
+int cmd_df(const char *fsname)
 {
-  const char *fsname = argv[1];
   uint8_t *map;
   size_t size;
   int fd = open_fs(fsname, &map, &size);
   if (fd < 0)
-    return -1;
+    return 1;
 
   struct pignoufs *sb = (struct pignoufs *)map;
   printf("%d blocs de 4Kio libres\n", sb->nb_l);
@@ -211,42 +176,37 @@ void cmd_df(int argc, char *argv[])
   return 0;
 }
 
-void cmd_cp(int argc, char *argv[])
+int cmd_cp(int argc, char *argv[])
 {
   printf("Exécution de la commande cp\n");
+  return 0;
 }
 
-void cmd_rm(int argc, char *argv[])
+int cmd_rm(int argc, char *argv[])
 {
   printf("Exécution de la commande rm\n");
+  return 0;
 }
 
-void cmd_lock(int argc, char *argv[])
+int cmd_lock(int argc, char *argv[])
 {
   printf("Exécution de la commande lock\n");
+  return 0;
 }
 
-void cmd_chmod(int argc, char *argv[])
+int cmd_chmod(int argc, char *argv[])
 {
   printf("Exécution de la commande chmod\n");
+  return 0;
 }
 
-void cmd_cat(int argc, char *argv[])
+int cmd_cat(const char *fsname, const char *filename)
 {
-  const char *fsname = argv[1];
-  const char *filename = argv[2];
-  if (strncmp(filename, "//", 2) != 0)
-  {
-    fprintf(stderr, "Erreur: Le nom de fichier interne doit commencer par \"//\".\n");
-    return;
-  }
-  filename += 2;
-
   uint8_t *map;
   size_t size;
   int fd = open_fs(fsname, &map, &size);
   if (fd < 0)
-    return -1;
+    return 1;
 
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
@@ -255,7 +215,7 @@ void cmd_cat(int argc, char *argv[])
   {
     printf("%s non trouvé\n", filename);
     close_fs(fd, map, size);
-    return;
+    return 1;
   }
 
   uint32_t file_size = le32toh(in->file_size);
@@ -264,12 +224,17 @@ void cmd_cat(int argc, char *argv[])
   // 1) Direct blocs
   for (int i = 0; i < 900 && remaining_data > 0; i++)
   {
-    uint64_t b = le32toh(in->direct_blocks[i]);
-    if (b < 0)
-      break;
-    uint64_t *data_position = map + (uint64_t)b * 4096;
-    uint64_t buffer = remaining_data < 4000 ? remaining_data : 4000;
-    write(STDOUT_FILENO, data_position, buffer);
+    int32_t b = le32toh(in->direct_blocks[i]);
+    if (b < 0) break;
+    uint8_t *data_position = map + (uint64_t)b * 4096;
+    uint32_t buffer = remaining_data < 4000 ? remaining_data : 4000;
+    size_t written = write(STDOUT_FILENO, data_position, buffer);
+    if (written == -1)
+    {
+      perror("write");
+      close_fs(fd, map, size);
+      return 1;
+    }
     remaining_data -= buffer;
   }
 
@@ -284,56 +249,61 @@ void cmd_cat(int argc, char *argv[])
   {
     goto end;
   }
-  printf("dib = %d\n", dib);
   struct address_block *dbl = (struct address_block *)(map + (uint64_t)dib * 4096);
-  printf("dbl = %p\n", dbl);
-  printf("dbl->type = %d\n", le32toh(dbl->type));
   if(le32toh(dbl->type) == 6){
     for (int i = 0; i < 1000 && remaining_data > 0; i++)
     {
       int32_t db = le32toh(dbl->addresses[i]);
-      if (db < 0)
-        break;
-      uint64_t *data_position2 = map + (uint64_t)db * 4096;
+      if (db < 0) break;
+      uint8_t *data_position2 = map + (uint64_t)db * 4096;
       uint32_t buffer = remaining_data < 4000 ? remaining_data : 4000;
-      write(STDOUT_FILENO, data_position2, buffer);
+      size_t written = write(STDOUT_FILENO, data_position2, buffer);
+      if (written == -1)
+      {
+        perror("write");
+        close_fs(fd, map, size);
+        return 1;
+      }
       remaining_data -= buffer;
     }
     goto end;
   }else{
     for (int i = 0; i < 1000 && remaining_data > 0; i++)
     {
-      uint32_t db = le32toh(dbl->addresses[i]);
-      if (db < 0)
-        break;
-      uint64_t *data_position2 = map + (uint64_t)db * 4096;
+      int32_t db = le32toh(dbl->addresses[i]);
+      if (db < 0) break;
+      uint8_t *data_position2 = map + (uint64_t)db * 4096;
       struct address_block *ab2 = (struct address_block *)data_position2;
       for (int j = 0; j < 1000 && remaining_data > 0; j++)
       {
-        uint32_t db2 = le32toh(ab2->addresses[j]);
-        if (db2 < 0)
-          break;
-        uint64_t *data_position3 = map + (uint64_t)db2 * 4096;
+        int32_t db2 = le32toh(ab2->addresses[j]);
+        if (db2 < 0) break;
+        uint8_t *data_position3 = map + (uint64_t)db2 * 4096;
         uint32_t buffer = remaining_data < 4000 ? remaining_data : 4000;
-        write(STDOUT_FILENO, data_position3, buffer);
+        size_t written = write(STDOUT_FILENO, data_position3, buffer);
+        if (written == -1)
+        {
+          perror("write");
+          close_fs(fd, map, size);
+          return 1;
+        }
         remaining_data -= buffer;
       }
     }
-    end:
-    close_fs(fd, map, size);
-    return;
   }
+  end:
   close_fs(fd, map, size);
+  return 0;
 }
 
-void cmd_input(int argc, char *argv[])
+int cmd_input(int argc, char *argv[])
 {
   const char *fsname = argv[1];
   const char *filename = argv[2];
   if (strncmp(filename, "//", 2) != 0)
   {
     fprintf(stderr, "Erreur: Le nom de fichier interne doit commencer par \"//\".\n");
-    return;
+    return 1;
   }
   filename += 2;
 
@@ -341,7 +311,7 @@ void cmd_input(int argc, char *argv[])
   size_t size;
   int fd = open_fs(fsname, &map, &size);
   if (fd < 0)
-    return -1;
+    return 1;
 
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
@@ -351,14 +321,12 @@ void cmd_input(int argc, char *argv[])
     int status = create_file(map, filename);
     if (status == -1)
     {
-      return -1;
+      return 1;
     }
     in = find_inode(map, nb1, nbi, filename);
   }else{
     dealloc_data_block(in, map);
   }
-
-  struct pignoufs *sb = (struct pignoufs *)map;
 
   char buf[4000]; 
   size_t r;
@@ -367,14 +335,14 @@ void cmd_input(int argc, char *argv[])
   {
     uint32_t offset = (in->file_size % 4000);
     if (offset > 0) {
-      int32_t last = get_last_data_block(map,in,nb1,nbi,nba,nbb);
+      int32_t last = get_last_data_block(map, in);
       struct data_block *db = (struct data_block *)(map + (uint64_t)last * 4096);
       memcpy(db->data+offset, buf, r);
       calcul_sha1(db->data, 4000, db->sha1);
       total += r;
       in->file_size = total;
     }else{
-      uint32_t b = get_last_data_block_null(map,in,nb1,nbi,nba,nbb);
+      int32_t b = get_last_data_block_null(map, in);
       if (b == -2) {
         perror("Erreur: pas de blocs de données libres disponibles\n");
         break;
@@ -395,27 +363,21 @@ void cmd_input(int argc, char *argv[])
   return 0;
 }
 
-int cmd_add(int argc, char *argv[])
+int cmd_add(const char *fsname, const char *filename_ext, const char *filename_int)
 {
-  const char *fsname = argv[1];
-  const char *filename_ext = argv[2];
-  const char *filename_int = argv[3];
-
   uint8_t *map;
   size_t size;
   int fd = open_fs(fsname, &map, &size);
-  if (fd < 0)
-    return -1;
+  if (fd < 0) return 1;
 
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
-  struct pignoufs *sb = (struct pignoufs *)map;
   int inf = open(filename_ext, O_RDONLY);
 
   if (inf < 0)
   {
     perror("open source");
-    return;
+    return 1;
   }
 
   struct inode *in = find_inode(map, nb1, nbi, filename_int);
@@ -424,14 +386,14 @@ int cmd_add(int argc, char *argv[])
     int status = create_file(map, filename_int);
     if (status == -1)
     {
-      return -1;
+      return 1;
     }
     in = find_inode(map, nb1, nbi, filename_int);
   }
   uint32_t offset = (in->file_size % 4000);
   char buf[4000]; size_t r; uint32_t total = in->file_size;
   if (offset > 0) {
-    int32_t last = get_last_data_block(map,in,nb1,nbi,nba,nbb);
+    int32_t last = get_last_data_block(map, in);
     r = read(inf, buf, 4000-offset);
     struct data_block *db = (struct data_block *)(map + (uint64_t)last * 4096);
     memcpy(db->data+offset, buf, r);
@@ -442,7 +404,7 @@ int cmd_add(int argc, char *argv[])
   }
 
   while ((r = read(inf, buf, 4000)) > 0) {
-    uint32_t b = get_last_data_block_null(map,in,nb1,nbi,nba,nbb);
+    int32_t b = get_last_data_block_null(map, in);
     if (b == -2) {
       perror("Erreur: pas de blocs de données libres disponibles\n");
       break;
@@ -465,17 +427,20 @@ int cmd_add(int argc, char *argv[])
   return 0;
 }
 
-void cmd_addinput(int argc, char *argv[])
+int cmd_addinput(int argc, char *argv[])
 {
   printf("Exécution de la commande addinput\n");
+  return 0;
 }
 
-void cmd_fsck(int argc, char *argv[])
+int cmd_fsck(int argc, char *argv[])
 {
   printf("Exécution de la commande fsck\n");
+  return 0;
 }
 
-void cmd_mount(int argc, char *argv[])
+int cmd_mount(int argc, char *argv[])
 {
   printf("Exécution de la commande mount\n");
+  return 0;
 }

@@ -37,38 +37,86 @@ int main(int argc, char *argv[])
     }
   }
 
+  const char *fsname = argv[1];
+  if (strncmp(fsname, "//", 2) == 0)
+  {
+    fprintf(stderr, "Erreur: Le nom de fichier externe ne doit pas commencer par \"//\".\n");
+    return 1;
+  }
+
   // Appeler la commande correspondante
   if (strcmp(command, "mkfs") == 0)
   {
-    cmd_mkfs(argc, argv);
+    if (argc < 4)
+    {
+      fprintf(stderr, "Usage: mkfs <fsname> <nbi> <nba>\n");
+      return 1;
+    }
+    char *endptr;
+    int nbi = strtol(argv[2], &endptr, 10);
+    if (*endptr != '\0')
+    {
+      fprintf(stderr, "Erreur: %s n'est pas un nombre valide.\n", argv[2]);
+      return 1;
+    }
+    int nba = strtol(argv[3], &endptr, 10);
+    if (*endptr != '\0')
+    {
+      fprintf(stderr, "Erreur: %s n'est pas un nombre valide.\n", argv[3]);
+      return 1;
+    }
+    return cmd_mkfs(fsname, nbi, nba);
   }
   else if (strcmp(command, "ls") == 0)
   {
-    cmd_ls(argc, argv);
+    const char *filename = NULL;
+    if (argc > 2)
+    {
+      filename = argv[2];
+      if (strncmp(filename, "//", 2) != 0)
+      {
+        fprintf(stderr, "Erreur: Le nom de fichier interne doit commencer par \"//\".\n");
+        return 1;
+      }
+      filename += 2; // Ignorer les deux premiers caractères
+    }
+    return cmd_ls(fsname, filename);
   }
   else if (strcmp(command, "df") == 0)
   {
-    cmd_df(argc, argv);
+    return cmd_df(fsname);
   }
   else if (strcmp(command, "cp") == 0)
   {
-    cmd_cp(argc, argv);
+    return cmd_cp(argc, argv);
   }
   else if (strcmp(command, "rm") == 0)
   {
-    cmd_rm(argc, argv);
+    return cmd_rm(argc, argv);
   }
   else if (strcmp(command, "lock") == 0)
   {
-    cmd_lock(argc, argv);
+    return cmd_lock(argc, argv);
   }
   else if (strcmp(command, "chmod") == 0)
   {
-    cmd_chmod(argc, argv);
+    return cmd_chmod(argc, argv);
   }
   else if (strcmp(command, "cat") == 0)
   {
-    cmd_cat(argc, argv);
+    if (argc < 3)
+    {
+      fprintf(stderr, "Erreur : la commande 'cat' nécessite au moins 2 arguments.\n");
+      return 1;
+    }
+    const char *filename = argv[2];
+    if (strncmp(filename, "//", 2) != 0)
+    {
+      fprintf(stderr, "Erreur: Le nom de fichier interne doit commencer par \"//\".\n");
+      return 1;
+    }
+    filename += 2;
+    return cmd_cat(fsname, filename);
   }
   else if (strcmp(command, "input") == 0)
   {
@@ -76,9 +124,9 @@ int main(int argc, char *argv[])
   }
   else if (strcmp(command, "add") == 0)
   {
-    if (argc < 3)
+    if (argc < 4)
     {
-      fprintf(stderr, "Erreur : la commande 'add' nécessite au moins 2 arguments.\n");
+      fprintf(stderr, "Erreur : la commande 'add' nécessite au moins 3 arguments.\n");
       return 1;
     }
     if (strncmp(argv[2], "//", 2) == 0)
@@ -86,25 +134,27 @@ int main(int argc, char *argv[])
       fprintf(stderr, "Erreur: Le nom de fichier externe ne doit pas commencer par \"//\".\n");
       return 1;
     }
+    const char *filename_ext = argv[2];
     if (strncmp(argv[3], "//", 2) != 0)
     {
       fprintf(stderr, "Erreur: Le nom de fichier interne doit commencer par \"//\".\n");
       return 1;
     }
     argv[3] += 2;
-    return cmd_add(argc, argv);
+    const char *filename_int = argv[3];
+    return cmd_add(fsname, filename_ext, filename_int);
   }
   else if (strcmp(command, "addinput") == 0)
   {
-    cmd_addinput(argc, argv);
+    return cmd_addinput(argc, argv);
   }
   else if (strcmp(command, "fsck") == 0)
   {
-    cmd_fsck(argc, argv);
+    return cmd_fsck(argc, argv);
   }
   else if (strcmp(command, "mount") == 0)
   {
-    cmd_mount(argc, argv);
+    return cmd_mount(argc, argv);
   }
   else
   {
@@ -112,6 +162,5 @@ int main(int argc, char *argv[])
     print_usage();
     return 1;
   }
-
   return 0;
 }

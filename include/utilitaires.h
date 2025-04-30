@@ -6,10 +6,27 @@
 // Calcul SHA1 d'un bloc de données
 static void calcul_sha1(const void *data, size_t len, uint8_t *out)
 {
-  SHA_CTX ctx;
-  SHA1_Init(&ctx);
-  SHA1_Update(&ctx, data, len);
-  SHA1_Final(out, &ctx);
+  EVP_MD_CTX *ctx = EVP_MD_CTX_new(); // Crée un contexte pour le calcul
+  if (!ctx) {
+    perror("Erreur : Impossible de créer le contexte EVP");
+    return;
+  }
+  if (EVP_DigestInit_ex(ctx, EVP_sha1(), NULL) != 1) {
+    perror("Erreur : EVP_DigestInit_ex a échoué");
+    EVP_MD_CTX_free(ctx);
+    return;
+  }
+  if (EVP_DigestUpdate(ctx, data, len) != 1) {
+    perror("Erreur : EVP_DigestUpdate a échoué");
+    EVP_MD_CTX_free(ctx);
+    return;
+  }
+  if (EVP_DigestFinal_ex(ctx, out, NULL) != 1) {
+    perror("Erreur : EVP_DigestFinal_ex a échoué");
+    EVP_MD_CTX_free(ctx);
+    return;
+  }
+  EVP_MD_CTX_free(ctx);
 }
 
 // Récupération des données du conteneur
@@ -19,7 +36,7 @@ static void get_conteneur_data(uint8_t *map, int32_t *nb1, int32_t *nbi, int32_t
   *nbi = le32toh(sb->nb_i);
   *nba = le32toh(sb->nb_a);
   *nbb = le32toh(sb->nb_b);
-  *nb1 = *nbb - 1 - *nbi - *nba;./
+  *nb1 = *nbb - 1 - *nbi - *nba;
 }
 
 static void decremente_lbl(uint8_t *map)
@@ -127,13 +144,12 @@ static struct inode *find_inode(uint8_t *map, int32_t nb1, int32_t nbi, const ch
 static uint64_t alloc_data_block(uint8_t *map)
 {
   struct pignoufs *sb = (struct pignoufs *)map;
-  int32_t nb1, nbi, nba, nbb, nbl;
+  int32_t nb1, nbi, nba, nbb;
   nbi = le32toh(sb->nb_i);
   nba = le32toh(sb->nb_a);
   nbb = le32toh(sb->nb_b);
-  nbl = le32toh(sb->nb_l);
   nb1 = nbb - 1 - nbi - nba;
-  for (uint64_t bloc_adresse_libre = 1 + nb1 + nbi; bloc_adresse_libre < nbb; bloc_adresse_libre++)
+  for (uint64_t bloc_adresse_libre = 1 + nb1 + nbi; bloc_adresse_libre < (uint64_t)nbb; bloc_adresse_libre++)
   {
     uint64_t idx = bloc_adresse_libre / 32000;
     uint64_t bit = bloc_adresse_libre % 32000;
@@ -171,7 +187,7 @@ static void dealloc_data_block(struct inode *in, uint8_t *map)
     if(in->direct_blocks[i] != -1){
       bitmap_dealloc(map, in->direct_blocks[i]);
       in->direct_blocks[i] = -1;
-      decremente_lbl(map);
+      incremente_lbl(map);
     }
   }
 
@@ -182,7 +198,7 @@ static void dealloc_data_block(struct inode *in, uint8_t *map)
         if(dbl->addresses[i] != -1){
           bitmap_dealloc(map, dbl->addresses[i]);
           dbl->addresses[i] = -1;
-          decremente_lbl(map);
+          incremente_lbl(map);
         }
       }
     }else{
@@ -192,17 +208,17 @@ static void dealloc_data_block(struct inode *in, uint8_t *map)
           if(sib->addresses[j] != -1){
             bitmap_dealloc(map, sib->addresses[j]);
             sib->addresses[j] = -1;
-            decremente_lbl(map);
+            incremente_lbl(map);
           }
         }
         bitmap_dealloc(map, dbl->addresses[i]);
         dbl->addresses[i] = -1;
-        decremente_lbl(map);
+        incremente_lbl(map);
       }
     }
     bitmap_dealloc(map, in->double_indirect_block);
     in->double_indirect_block = -1;
-    decremente_lbl(map);
+    incremente_lbl(map);
   }
   in->file_size = 0;
   in->modification_time = htole32(time(NULL));
@@ -256,11 +272,11 @@ static int create_file(uint8_t *map, const char *filename)
 }
 
 // On récupère le dernier bloc écrit
-static int32_t get_last_data_block(uint8_t *map, struct inode *in, int32_t nb1, int32_t nbi, int32_t nba, int32_t nbb) {
+static int32_t get_last_data_block(uint8_t *map, struct inode *in) {
   uint32_t size = le32toh(in->file_size);  
   int32_t last_index = (size - 1) / 4000;
   // printf("last_index = %d\n", last_index);
-  if(le32toh(in->double_indirect_block) == -1){
+  if(le32toh(in->double_indirect_block) == (unsigned)-1){
     return in->direct_blocks[last_index];
   }else{
     last_index -= 900;
@@ -277,9 +293,9 @@ static int32_t get_last_data_block(uint8_t *map, struct inode *in, int32_t nb1, 
 }
 
 // Pour les calculs ont suppose qu'on ait des blocs pleins
-static uint32_t get_last_data_block_null(uint8_t *map, struct inode *in, int32_t nb1, int32_t nbi, int32_t nba, int32_t nbb) {
+static int32_t get_last_data_block_null(uint8_t *map, struct inode *in) {
   uint32_t size = in->file_size;
-  uint32_t last_index = size / 4000;
+  int32_t last_index = size / 4000;
   if(last_index == 900 + (1000*1000)){
     perror("Erreur: limite de 1000900 blocs de données atteinte");
     return -2;

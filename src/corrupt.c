@@ -48,7 +48,7 @@ int main(int argc, char **argv) {
        Notez qu'un même octet malchanceux peut être corrompu plusieurs fois.
        This is a feature not a bug : en effet 
        n fois un octet random != n octets random */
-    for(int i=0; i<n ; i++)
+    for(unsigned i=0; i<n ; i++)
 	{
 	    // tire un offset aléatoire
 	    if(fread(&randoff, sizeof(size_t), 1, randfile) != 1) 
