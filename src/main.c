@@ -12,6 +12,7 @@ static void print_usage()
 
 int main(int argc, char *argv[])
 {
+
   if (argc < 2)
   {
     print_usage();
@@ -36,23 +37,10 @@ int main(int argc, char *argv[])
     }
   }
 
-  if (argc > 1)
-  {
-    if (strncmp(argv[1], "//", 2) == 0)
-    {
-      fprintf(stderr, "Erreur : '%s' n'est pas un format valide\n", argv[1]);
-      return 1;
-    }
-  }
-
   // Appeler la commande correspondante
   if (strcmp(command, "mkfs") == 0)
   {
     cmd_mkfs(argc, argv);
-  }
-  else if (strcmp(command, "touch") == 0)
-  {
-    cmd_touch(argc, argv);
   }
   else if (strcmp(command, "ls") == 0)
   {
@@ -84,11 +72,27 @@ int main(int argc, char *argv[])
   }
   else if (strcmp(command, "input") == 0)
   {
-    cmd_input(argc, argv);
+    return cmd_input(argc, argv);
   }
   else if (strcmp(command, "add") == 0)
   {
-    cmd_add(argc, argv);
+    if (argc < 3)
+    {
+      fprintf(stderr, "Erreur : la commande 'add' nécessite au moins 2 arguments.\n");
+      return 1;
+    }
+    if (strncmp(argv[2], "//", 2) == 0)
+    {
+      fprintf(stderr, "Erreur: Le nom de fichier externe ne doit pas commencer par \"//\".\n");
+      return 1;
+    }
+    if (strncmp(argv[3], "//", 2) != 0)
+    {
+      fprintf(stderr, "Erreur: Le nom de fichier interne doit commencer par \"//\".\n");
+      return 1;
+    }
+    argv[3] += 2;
+    return cmd_add(argc, argv);
   }
   else if (strcmp(command, "addinput") == 0)
   {
