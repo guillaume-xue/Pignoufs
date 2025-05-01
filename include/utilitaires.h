@@ -141,6 +141,23 @@ static struct inode *find_inode(uint8_t *map, int32_t nb1, int32_t nbi, const ch
   return researched;
 }
 
+static int32_t find_node_pos(uint8_t *map, const char *name)
+{
+  int32_t nb1, nbi, nba, nbb;
+  get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
+  int32_t base = 1 + nb1;
+  for (int i = 0; i < nbi; i++)
+  {
+    struct inode *in = (struct inode *)(map + (uint64_t)(base + i) * 4096);
+    if (le32toh(in->flags) & 1)
+    {
+      if (strcmp(in->filename, name) == 0)
+        return base + i;
+    }
+  }
+  return -1;
+}
+
 static int32_t alloc_data_block(uint8_t *map)
 {
   int32_t nb1, nbi, nba, nbb;
@@ -171,8 +188,7 @@ static void bitmap_dealloc(uint8_t *map, int32_t blknum)
   struct bitmap_block *bb = (struct bitmap_block *)data_position;
   bb->bits[bit / 8] |= (1 << (bit % 8));
   calcul_sha1(bb->bits, 4000, bb->sha1);
-  bb->type = htole32(2);
-}
+  }
 
 static void dealloc_data_block(struct inode *in, uint8_t *map)
 {
@@ -214,12 +230,35 @@ static void dealloc_data_block(struct inode *in, uint8_t *map)
       }
     }
     bitmap_dealloc(map, in->double_indirect_block);
-    in->double_indirect_block = -1;
+    in->double_indirect_block = htole32(-1);
     incremente_lbl(map);
   }
-  in->file_size = 0;
+  in->file_size = htole32(0);
   in->modification_time = htole32(time(NULL));
   calcul_sha1(in, 4000, in->sha1);
+}
+
+static void delete_inode(struct inode *in, uint8_t *map)
+{
+  dealloc_data_block(in, map);
+  int32_t pos = find_node_pos(map, in->filename);
+  if (pos == -1)
+  {
+    fprintf(stderr, "Erreur: inode introuvable\n");
+    return;
+  }
+  in->flags = htole32(0);
+  in->file_size = htole32(0);
+  in->creation_time = htole32(0);
+  in->access_time = htole32(0);
+  in->modification_time = htole32(0);
+  memset(in->filename, 0, sizeof(in->filename));
+  memset(in->extensions, 0, sizeof in->extensions);
+  bitmap_dealloc(map, pos);
+  struct pignoufs *sb = (struct pignoufs *)map;
+  sb->nb_f--;
+  calcul_sha1(in, 4000, in->sha1);
+  in->type = htole32(3);
 }
 
 static int create_file(uint8_t *map, const char *filename)
@@ -262,7 +301,7 @@ static int create_file(uint8_t *map, const char *filename)
 
   // Mettre à jour les compteurs du superbloc et son SHA1
 
-  sb->nb_f += 1;
+  sb->nb_f++;
   calcul_sha1(map, 4000, map + 4000);
 
   return 0;

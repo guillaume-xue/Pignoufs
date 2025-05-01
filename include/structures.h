@@ -15,6 +15,8 @@
 #include <endian.h>
 #include <math.h>
 #include <stdbool.h>
+#include <signal.h>
+
 
 struct pignoufs
 {

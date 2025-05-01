@@ -1,6 +1,16 @@
 #include "../include/structures.h"
 #include "../include/utilitaires.h"
 
+volatile sig_atomic_t keep_running = 1;
+void handle_sigterm(int sig) {
+  (void)sig;
+  keep_running = 0;
+}
+void handle_sigint(int sig) {
+  (void)sig;
+  raise(SIGTERM);
+}
+
 // Fonction de création du système de fichiers (mkfs)
 int cmd_mkfs(const char *fsname, int nbi, int nba)
 {
@@ -175,27 +185,306 @@ int cmd_df(const char *fsname)
   return 0;
 }
 
-int cmd_cp(int argc, char *argv[])
+int cmd_cp(const char *fsname, const char *filename1, const char *filename2, bool mode1, bool mode2)
 {
-  printf("Exécution de la commande cp\n");
+  uint8_t *map;
+  size_t size;
+  int fd = open_fs(fsname, &map, &size);
+  if (fd < 0) return 1;
+
+  int32_t nb1, nbi, nba, nbb;
+  get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
+  
+  if(mode1 && mode2) // Si les deux fichiers sont internes
+  {
+    struct inode *in = find_inode(map, nb1, nbi, filename1);
+    if (!in)
+    {
+      printf("%s introuvable, impossible à copier\n", filename1);
+      close_fs(fd, map, size);
+      return 1;
+    }
+    struct inode *in2 = find_inode(map, nb1, nbi, filename2);
+    if (!in2)
+    {
+      int status = create_file(map, filename2);
+      if (status == -1)
+      {
+        close_fs(fd, map, size);
+        return 1;
+      }
+      in2 = find_inode(map, nb1, nbi, filename2);
+    }else{
+      dealloc_data_block(in2, map);
+    }
+    for(int i = 0; i < 900; i++)
+    {
+      int32_t b = le32toh(in->direct_blocks[i]);
+      if (b < 0) break;
+      struct data_block *data_position = (struct data_block *)(map + (uint64_t)b * 4096);
+      int32_t new_block = alloc_data_block(map);
+      struct data_block *new_data_position = (struct data_block *)(map + (uint64_t)new_block * 4096);
+      memcpy(new_data_position->data, data_position->data, 4000);
+      in2->direct_blocks[i] = htole32(new_block);
+      in2->file_size = htole32(le32toh(in2->file_size) + 4000);
+      in2->modification_time = htole32(time(NULL));
+    }
+    if((int32_t)le32toh(in->double_indirect_block) != -1){
+      struct address_block *dbl = (struct address_block *)(map + (uint64_t)le32toh(in->double_indirect_block) * 4096);
+      if(le32toh(dbl->type) == 6){
+        for(int i = 0; i < 1000; i++){
+          int32_t db = le32toh(dbl->addresses[i]);
+          if (db < 0) break;
+          struct data_block *data_position2 = (struct data_block *)(map + (uint64_t)db * 4096);
+          int32_t new_block = alloc_data_block(map);
+          struct data_block *new_data_position2 = (struct data_block *)(map + (uint64_t)new_block * 4096);
+          memcpy(new_data_position2->data, data_position2->data, 4000);
+          in2->direct_blocks[i] = htole32(new_block);
+          in2->file_size = htole32(le32toh(in2->file_size) + 4000);
+          in2->modification_time = htole32(time(NULL));
+        }
+      }else{
+        for(int i = 0; i < 1000; i++){
+          int32_t db = le32toh(dbl->addresses[i]);
+          if (db < 0) break;
+          struct address_block *sib = (struct address_block *)(map + (uint64_t)db * 4096);
+          for(int j = 0; j < 1000; j++){
+            int32_t db2 = le32toh(sib->addresses[j]);
+            if(db2 < 0) break;
+            struct data_block *data_position3 = (struct data_block *)(map + (uint64_t)db2 * 4096);
+            int32_t new_block = alloc_data_block(map);
+            struct data_block *new_data_position3 = (struct data_block *)(map + (uint64_t)new_block * 4096);
+            memcpy(new_data_position3->data, data_position3->data, 4000);
+            in2->direct_blocks[i] = htole32(new_block);
+            in2->file_size = htole32(le32toh(in2->file_size) + 4000);
+            in2->modification_time = htole32(time(NULL));
+          }
+        }
+      }
+    }
+  }else if(mode1 && !mode2) // Si le premier fichier est interne et le second externe
+  {
+    struct inode *in = find_inode(map, nb1, nbi, filename1);
+    if (!in)
+    {
+      printf("%s introuvable, impossible à copier\n", filename1);
+      close_fs(fd, map, size);
+      return 1;
+    }
+    int32_t file_size = le32toh(in->file_size);
+    int fd2 = open(filename2, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd2 < 0)
+    {
+      perror("open");
+      close_fs(fd, map, size);
+      return 1;
+    }
+    for(int i = 0; i < 900 && file_size > 0; i++)
+    {
+      int32_t b = le32toh(in->direct_blocks[i]);
+      if (b < 0) break;
+      uint8_t *data_position = map + (uint64_t)b * 4096;
+      uint32_t buffer = file_size < 4000 ? file_size : 4000;
+      int written = write(fd2, data_position, buffer);
+      if (written == -1)
+      {
+        perror("write");
+        close_fs(fd, map, size);
+        close(fd2);
+        return 1;
+      }
+      file_size -= buffer;
+    }
+    if((int32_t)le32toh(in->double_indirect_block) != -1){
+      struct address_block *dbl = (struct address_block *)(map + (uint64_t)le32toh(in->double_indirect_block) * 4096);
+      if(le32toh(dbl->type) == 6){
+        for(int i = 0; i < 1000 && file_size > 0; i++){
+          int32_t db = le32toh(dbl->addresses[i]);
+          if (db < 0) break;
+          uint8_t *data_position2 = map + (uint64_t)db * 4096;
+          uint32_t buffer = file_size < 4000 ? file_size : 4000;
+          int written = write(fd2, data_position2, buffer);
+          if (written == -1)
+          {
+            perror("write");
+            close_fs(fd, map, size);
+            close(fd2);
+            return 1;
+          }
+          file_size -= buffer;
+        }
+      }else{
+        for(int i = 0; i < 1000 && file_size > 0; i++){
+          int32_t db = le32toh(dbl->addresses[i]);
+          if (db < 0) break;
+          struct address_block *sib = (struct address_block *)(map + (uint64_t)db * 4096);
+          for(int j = 0; j < 1000 && file_size > 0; j++){
+            int32_t db2 = le32toh(sib->addresses[j]);
+            if(db2 < 0) break;
+            uint8_t *data_position3 = map + (uint64_t)db2 * 4096;
+            uint32_t buffer = file_size < 4000 ? file_size : 4000;
+            int written = write(fd2, data_position3, buffer);
+            if (written == -1)
+            {
+              perror("write");
+              close_fs(fd, map, size);
+              close(fd2);
+              return 1;
+            }
+            file_size -= buffer;
+          }
+        }
+      }
+    }
+    close(fd2);
+  }else // Si le premier fichier est externe et le second interne
+  {
+    int fd2 = open(filename1, O_RDONLY);
+    if (fd2 < 0)
+    {
+      perror("open");
+      close_fs(fd, map, size);
+      return 1;
+    }
+    struct inode *in = find_inode(map, nb1, nbi, filename2);
+    if (!in)
+    {
+      int status = create_file(map, filename2);
+      if (status == -1)
+      {
+        close_fs(fd, map, size);
+        close(fd2);
+        return 1;
+      }
+      in = find_inode(map, nb1, nbi, filename2);
+    }else{
+      dealloc_data_block(in, map);
+    }
+    uint32_t total = 0;
+    char buf[4000]; size_t r; 
+    while ((r = read(fd2, buf, 4000)) > 0)
+    {
+      int32_t b = get_last_data_block_null(map, in);
+      if (b == -2) {
+        perror("Erreur: pas de blocs de données libres disponibles\n");
+        break;
+      }
+      struct data_block *db = (struct data_block *)(map + (uint64_t)b * 4096);
+      memset(db->data, 0, sizeof(db->data));
+      memcpy(db->data, buf, r);
+      calcul_sha1(db->data, 4000, db->sha1);
+      db->type = htole32(5);
+      total += r;
+      in->file_size = htole32(total);
+    }
+    in->file_size = htole32(total);
+    in->modification_time = htole32(time(NULL));
+    calcul_sha1(in, 4000, in->sha1);
+    close(fd2);
+  }
+  close_fs(fd, map, size);
   return 0;
 }
 
-int cmd_rm(int argc, char *argv[])
+int cmd_rm(const char *fsname, const char *filename)
 {
-  printf("Exécution de la commande rm\n");
+  uint8_t *map;
+  size_t size;
+  int fd = open_fs(fsname, &map, &size);
+  if (fd < 0) return 1;
+
+  int32_t nb1, nbi, nba, nbb;
+  get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
+  struct inode *in = find_inode(map, nb1, nbi, filename);
+  if (!in || !(le32toh(in->flags) & 1))
+  {
+    printf("%s introuvable\n", filename);
+    close_fs(fd, map, size);
+    return 1;
+  }
+
+  delete_inode(in, map);
+
+  close_fs(fd, map, size);
   return 0;
 }
 
-int cmd_lock(int argc, char *argv[])
+int cmd_lock(const char *fsname, const char *filename, const char *arg)
 {
-  printf("Exécution de la commande lock\n");
+  signal(SIGTERM, handle_sigterm);
+  signal(SIGINT, handle_sigint);
+
+  uint8_t *map;
+  size_t size;
+  int fd = open_fs(fsname, &map, &size);
+  if (fd < 0) return 1;
+
+  int32_t nb1, nbi, nba, nbb;
+  get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
+  struct inode *in = find_inode(map, nb1, nbi, filename);
+  if (!in)
+  {
+    printf("%s introuvable\n", filename);
+    close_fs(fd, map, size);
+    return 1;
+  }
+
+  if (strcmp(arg, "r") == 0)
+  {
+    in->flags |= (1 << 3);
+    while (keep_running)
+    {
+      sleep(1);
+    }
+    in->flags &= ~(1 << 3);
+    printf("SIGTERM reçu. Fin du programme.\n");
+  }
+  else if (strcmp(arg, "w") == 0)
+  {
+    in->flags |= (1 << 4);
+    while (keep_running)
+    {
+      sleep(1);
+    }
+    in->flags &= ~(1 << 4);
+    printf("SIGTERM reçu. Fin du programme.\n");
+  }
+
   return 0;
 }
 
-int cmd_chmod(int argc, char *argv[])
+int cmd_chmod(const char *fsname, const char *filename, const char *arg)
 {
-  printf("Exécution de la commande chmod\n");
+  uint8_t *map;
+  size_t size;
+  int fd = open_fs(fsname, &map, &size);
+  if (fd < 0) return 1;
+
+  int32_t nb1, nbi, nba, nbb;
+  get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
+  struct inode *in = find_inode(map, nb1, nbi, filename);
+  if (!in)
+  {
+    printf("%s introuvable\n", filename);
+    close_fs(fd, map, size);
+    return 1;
+  }
+  if (strcmp(arg, "+r") == 0)
+  {
+    in->flags |= (1 << 1);
+  }
+  else if (strcmp(arg, "-r") == 0)
+  {
+    in->flags &= ~(1 << 1);
+  }
+  else if (strcmp(arg, "+w") == 0)
+  {
+    in->flags |= (1 << 2);
+  }
+  else if (strcmp(arg, "-w") == 0)
+  {
+    in->flags &= ~(1 << 2);
+  }
   return 0;
 }
 

@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include "../include/commands.h"
 
 static void print_usage()
@@ -88,19 +89,91 @@ int main(int argc, char *argv[])
   }
   else if (strcmp(command, "cp") == 0)
   {
-    return cmd_cp(argc, argv);
+    bool mode1 = false, mode2 = false;
+    if (argc < 4)
+    {
+      fprintf(stderr, "Erreur : la commande 'cp' nécessite au moins 3 arguments.\n");
+      return 1;
+    }
+    const char *filename1 = argv[2];
+    if (strncmp(filename1, "//", 2) == 0)
+    {
+      filename1 += 2;
+      mode1 = true;
+    }
+    const char *filename2 = argv[3];
+    if (strncmp(filename2, "//", 2) == 0)
+    {
+      filename2 += 2;
+      mode2 = true;
+    }
+    if (!mode1 && !mode2)
+    {
+      fprintf(stderr, "Erreur: Les deux fichiers ne peuvent pas être externes.\n");
+      return 1;
+    }
+    return cmd_cp(fsname, filename1, filename2, mode1, mode2);
   }
   else if (strcmp(command, "rm") == 0)
   {
-    return cmd_rm(argc, argv);
+    if (argc < 3)
+    {
+      fprintf(stderr, "Erreur : la commande 'rm' nécessite au moins 2 arguments.\n");
+      return 1;
+    }
+    const char *filename = argv[2];
+    if (strncmp(filename, "//", 2) != 0)
+    {
+      fprintf(stderr, "Erreur: Le nom de fichier interne doit commencer par \"//\".\n");
+      return 1;
+    }
+    filename += 2; // Ignorer les deux premiers caractères
+    return cmd_rm(fsname, filename);
   }
   else if (strcmp(command, "lock") == 0)
   {
-    return cmd_lock(argc, argv);
+    if (argc < 4)
+    {
+      fprintf(stderr, "Erreur : la commande 'lock' nécessite au moins 3 arguments.\n");
+      return 1;
+    }
+    const char *filename = argv[2];
+    if (strncmp(filename, "//", 2) != 0)
+    {
+      fprintf(stderr, "Erreur: Le nom de fichier interne doit commencer par \"//\".\n");
+      return 1;
+    }
+    filename += 2; 
+    const char *arg = argv[3];
+    if(strcmp(arg, "r") == 0 || strcmp(arg, "w") == 0){
+      return cmd_lock(fsname, filename, arg);
+    }else{
+      fprintf(stderr, "Erreur: L'argument de lock doit être 'r' ou 'w'.\n");
+      return 1;
+    }
   }
   else if (strcmp(command, "chmod") == 0)
   {
-    return cmd_chmod(argc, argv);
+    if (argc < 3)
+    {
+      fprintf(stderr, "Erreur : la commande 'chmod' nécessite au moins 2 arguments.\n");
+      return 1;
+    }
+    const char *filename = argv[2];
+    if (strncmp(filename, "//", 2) != 0)
+    {
+      fprintf(stderr, "Erreur: Le nom de fichier interne doit commencer par \"//\".\n");
+      return 1;
+    }
+    filename += 2;
+    const char *arg = argv[3];
+    if(strcmp(arg, "+r") == 0 || strcmp(arg, "-r") == 0 || strcmp(arg, "+w") == 0 || strcmp(arg, "-w") == 0)
+    {
+      return cmd_chmod(fsname, filename, arg);
+    }else{
+      fprintf(stderr, "Erreur: L'argument de chmod doit être +r, -r, +w ou -w.\n");
+      return 1;
+    }
   }
   else if (strcmp(command, "cat") == 0)
   {
