@@ -120,7 +120,19 @@ int main(int argc, char *argv[])
   }
   else if (strcmp(command, "input") == 0)
   {
-    return cmd_input(argc, argv);
+    if (argc < 3)
+    {
+      fprintf(stderr, "Erreur : la commande 'input' nécessite au moins 2 arguments.\n");
+      return 1;
+    }
+    const char *filename = argv[2];
+    if (strncmp(filename, "//", 2) != 0)
+    {
+      fprintf(stderr, "Erreur: Le nom de fichier interne doit commencer par \"//\".\n");
+      return 1;
+    }
+    filename += 2;
+    return cmd_input(fsname, filename);
   }
   else if (strcmp(command, "add") == 0)
   {

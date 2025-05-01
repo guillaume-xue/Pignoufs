@@ -166,8 +166,7 @@ int cmd_df(const char *fsname)
   uint8_t *map;
   size_t size;
   int fd = open_fs(fsname, &map, &size);
-  if (fd < 0)
-    return 1;
+  if (fd < 0) return 1;
 
   struct pignoufs *sb = (struct pignoufs *)map;
   printf("%d blocs de 4Kio libres\n", sb->nb_l);
@@ -205,8 +204,7 @@ int cmd_cat(const char *fsname, const char *filename)
   uint8_t *map;
   size_t size;
   int fd = open_fs(fsname, &map, &size);
-  if (fd < 0)
-    return 1;
+  if (fd < 0) return 1;
 
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
@@ -228,7 +226,7 @@ int cmd_cat(const char *fsname, const char *filename)
     if (b < 0) break;
     uint8_t *data_position = map + (uint64_t)b * 4096;
     uint32_t buffer = remaining_data < 4000 ? remaining_data : 4000;
-    size_t written = write(STDOUT_FILENO, data_position, buffer);
+    int written = write(STDOUT_FILENO, data_position, buffer);
     if (written == -1)
     {
       perror("write");
@@ -257,7 +255,7 @@ int cmd_cat(const char *fsname, const char *filename)
       if (db < 0) break;
       uint8_t *data_position2 = map + (uint64_t)db * 4096;
       uint32_t buffer = remaining_data < 4000 ? remaining_data : 4000;
-      size_t written = write(STDOUT_FILENO, data_position2, buffer);
+      int written = write(STDOUT_FILENO, data_position2, buffer);
       if (written == -1)
       {
         perror("write");
@@ -280,7 +278,7 @@ int cmd_cat(const char *fsname, const char *filename)
         if (db2 < 0) break;
         uint8_t *data_position3 = map + (uint64_t)db2 * 4096;
         uint32_t buffer = remaining_data < 4000 ? remaining_data : 4000;
-        size_t written = write(STDOUT_FILENO, data_position3, buffer);
+        int written = write(STDOUT_FILENO, data_position3, buffer);
         if (written == -1)
         {
           perror("write");
@@ -296,22 +294,12 @@ int cmd_cat(const char *fsname, const char *filename)
   return 0;
 }
 
-int cmd_input(int argc, char *argv[])
+int cmd_input(const char *fsname, const char *filename)
 {
-  const char *fsname = argv[1];
-  const char *filename = argv[2];
-  if (strncmp(filename, "//", 2) != 0)
-  {
-    fprintf(stderr, "Erreur: Le nom de fichier interne doit commencer par \"//\".\n");
-    return 1;
-  }
-  filename += 2;
-
   uint8_t *map;
   size_t size;
   int fd = open_fs(fsname, &map, &size);
-  if (fd < 0)
-    return 1;
+  if (fd < 0) return 1;
 
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
@@ -330,17 +318,17 @@ int cmd_input(int argc, char *argv[])
 
   char buf[4000]; 
   size_t r;
-  uint32_t total = in->file_size;
+  uint32_t total = le32toh(in->file_size);
   while ((r = read(STDIN_FILENO, buf, 4000)) > 0)
   {
-    uint32_t offset = (in->file_size % 4000);
+    uint32_t offset = (total % 4000);
     if (offset > 0) {
       int32_t last = get_last_data_block(map, in);
       struct data_block *db = (struct data_block *)(map + (uint64_t)last * 4096);
       memcpy(db->data+offset, buf, r);
       calcul_sha1(db->data, 4000, db->sha1);
       total += r;
-      in->file_size = total;
+      in->file_size = htole32(total);
     }else{
       int32_t b = get_last_data_block_null(map, in);
       if (b == -2) {
@@ -348,12 +336,12 @@ int cmd_input(int argc, char *argv[])
         break;
       }
       struct data_block *db = (struct data_block *)(map + (uint64_t)b * 4096);
-  
+      memset(db->data, 0, sizeof(db->data));
       memcpy(db->data, buf, r);
       calcul_sha1(db->data, 4000, db->sha1);
-      db->type = 5;
+      db->type = htole32(5);
       total += r;
-      in->file_size = total;
+      in->file_size = htole32(total);
     }
   }
   in->file_size = htole32(total);
@@ -390,17 +378,26 @@ int cmd_add(const char *fsname, const char *filename_ext, const char *filename_i
     }
     in = find_inode(map, nb1, nbi, filename_int);
   }
-  uint32_t offset = (in->file_size % 4000);
-  char buf[4000]; size_t r; uint32_t total = in->file_size;
+  uint32_t total = le32toh(in->file_size);
+  uint32_t offset = (total % 4000);
+  char buf[4000]; size_t r; 
   if (offset > 0) {
     int32_t last = get_last_data_block(map, in);
     r = read(inf, buf, 4000-offset);
+    if ((int32_t)r == -1) {
+      perror("read source");
+      close_fs(fd, map, size);
+      return 1;
+    }
+    if (r == 0) {
+      close_fs(fd, map, size);
+      return 0;
+    }
     struct data_block *db = (struct data_block *)(map + (uint64_t)last * 4096);
     memcpy(db->data+offset, buf, r);
     calcul_sha1(db->data, 4000, db->sha1);
     total += r;
-    in->file_size = total;
-    
+    in->file_size = htole32(total);
   }
 
   while ((r = read(inf, buf, 4000)) > 0) {
@@ -414,11 +411,11 @@ int cmd_add(const char *fsname, const char *filename_ext, const char *filename_i
     memset(db->data, 0, sizeof(db->data));
     memcpy(db->data, buf, r);
     calcul_sha1(db->data, 4000, db->sha1);
-    db->type = 5;
+    db->type = htole32(5);
     total += r;
-    in->file_size = total;
+    in->file_size = htole32(total);
   }
-  in->file_size = total;
+  in->file_size = htole32(total);
   in->modification_time = htole32(time(NULL));
   calcul_sha1(in, 4000, in->sha1);
   close_fs(fd, map, size);
