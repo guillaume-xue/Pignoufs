@@ -12,8 +12,8 @@ int cmd_chmod(const char *fsname, const char *filename, const char *arg);
 int cmd_cat(const char *fsname, const char *filename);
 int cmd_input(const char *fsname, const char *filename);
 int cmd_add(const char *fsname, const char *filename_ext, const char *filename_int);
-int cmd_addinput(int argc, char *argv[]);
-int cmd_fsck(int argc, char *argv[]);
+int cmd_addinput(const char *fsname, const char *filename);
+int cmd_fsck(const char *fsname);
 int cmd_mount(int argc, char *argv[]);
 
 #endif

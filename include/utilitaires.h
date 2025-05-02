@@ -53,6 +53,15 @@ static void incremente_lbl(uint8_t *map)
   calcul_sha1(map, 4000, map + 4000);
 }
 
+static bool check_bitmap_bit(uint8_t *map, int32_t blknum)
+{
+  int32_t idx = blknum / 32000;
+  int32_t bit = blknum % 32000;
+  uint8_t *data_position = map + (int64_t)(1 + idx) * 4096;
+  struct bitmap_block *bb = (struct bitmap_block *)data_position;
+  return (bb->bits[bit / 8] & (1 << (bit % 8))) == 0;
+}
+
 // Initialisation d'un inode, fichier simple pour l'instant
 static void init_inode(struct inode *in, const char *name, bool type)
 {
@@ -118,7 +127,7 @@ static void bitmap_alloc(uint8_t *map, int32_t blknum)
 {
   int32_t idx = blknum / 32000;
   int32_t bit = blknum % 32000;
-  uint8_t *data_position = map + (uint64_t)(1 + idx) * 4096;
+  uint8_t *data_position = map + (int64_t)(1 + idx) * 4096;
   struct bitmap_block *bb = (struct bitmap_block *)data_position;
   bb->bits[bit / 8] &= ~(1 << (bit % 8));
   calcul_sha1(bb->bits, 4000, bb->sha1);
@@ -131,7 +140,7 @@ static struct inode *find_inode(uint8_t *map, int32_t nb1, int32_t nbi, const ch
   struct inode *researched = NULL;
   for (int i = 0; i < nbi; i++)
   {
-    struct inode *in = (struct inode *)(map + (uint64_t)(base + i) * 4096);
+    struct inode *in = (struct inode *)(map + (int64_t)(base + i) * 4096);
     if (le32toh(in->flags) & 1)
     {
       if (strcmp(in->filename, name) == 0)
@@ -148,7 +157,7 @@ static int32_t find_node_pos(uint8_t *map, const char *name)
   int32_t base = 1 + nb1;
   for (int i = 0; i < nbi; i++)
   {
-    struct inode *in = (struct inode *)(map + (uint64_t)(base + i) * 4096);
+    struct inode *in = (struct inode *)(map + (int64_t)(base + i) * 4096);
     if (le32toh(in->flags) & 1)
     {
       if (strcmp(in->filename, name) == 0)
@@ -166,7 +175,7 @@ static int32_t alloc_data_block(uint8_t *map)
   {
     int32_t idx = bloc_adresse_libre / 32000;
     int32_t bit = bloc_adresse_libre % 32000;
-    uint8_t *map2 = map + (uint64_t)(idx+1) * 4096;
+    uint8_t *map2 = map + (int64_t)(idx+1) * 4096;
     struct bitmap_block *bb = (struct bitmap_block *)map2;
     if ((bb->bits[bit / 8] & (1 << (bit % 8))) != 0)
     {
@@ -184,11 +193,11 @@ static void bitmap_dealloc(uint8_t *map, int32_t blknum)
   blknum = le32toh(blknum);
   int32_t idx = blknum / 32000;
   int32_t bit = blknum % 32000;
-  uint8_t *data_position = map + (uint64_t)(1 + idx) * 4096;
+  uint8_t *data_position = map + (int64_t)(1 + idx) * 4096;
   struct bitmap_block *bb = (struct bitmap_block *)data_position;
   bb->bits[bit / 8] |= (1 << (bit % 8));
   calcul_sha1(bb->bits, 4000, bb->sha1);
-  }
+}
 
 static void dealloc_data_block(struct inode *in, uint8_t *map)
 {
@@ -197,18 +206,23 @@ static void dealloc_data_block(struct inode *in, uint8_t *map)
 
   for(int i = 0; i < 900; i++)
   {
-    if(in->direct_blocks[i] != -1){
+    if((int32_t)le32toh(in->direct_blocks[i]) <0){
+      struct data_block *db = (struct data_block *)(map + (int64_t)le32toh(in->direct_blocks[i]) * 4096);
+      db->type = htole32(4);
+      calcul_sha1(db->data, 4000, db->sha1);
       bitmap_dealloc(map, in->direct_blocks[i]);
       in->direct_blocks[i] = -1;
       incremente_lbl(map);
     }
   }
-
-  if(in->double_indirect_block != -1){
-    struct address_block *dbl = (struct address_block *)(map + (uint64_t)le32toh(in->double_indirect_block) * 4096);
-    if(le32toh(dbl->type) == 6){
+  if((int32_t)le32toh(in->double_indirect_block) <0){
+    struct address_block *dbl = (struct address_block *)(map + (int64_t)le32toh(in->double_indirect_block) * 4096);
+    if((int32_t)le32toh(dbl->type) == 6){
       for(int i = 0; i < 1000; i++){
-        if(dbl->addresses[i] != -1){
+        if(dbl->addresses[i] <0){
+          struct data_block *db = (struct data_block *)(map + (int64_t)le32toh(dbl->addresses[i]) * 4096);
+          db->type = htole32(4);
+          calcul_sha1(db->data, 4000, db->sha1);
           bitmap_dealloc(map, dbl->addresses[i]);
           dbl->addresses[i] = htole32(-1);
           incremente_lbl(map);
@@ -216,18 +230,34 @@ static void dealloc_data_block(struct inode *in, uint8_t *map)
       }
     }else{
       for(int i = 0; i < 1000; i++){
-        struct address_block *sib = (struct address_block *)(map + (uint64_t)le32toh(dbl->addresses[i]) * 4096);
+        struct address_block *sib = (struct address_block *)(map + (int64_t)le32toh(dbl->addresses[i]) * 4096);
+        // printf("%d and %u %u\n", i, (int32_t)le32toh(dbl->addresses[i]), (int32_t)le32toh(in->double_indirect_block));
         for(int j = 0; j < 1000; j++){
-          if((int32_t)le32toh(sib->addresses[j]) != -1){
+          // printf("dealloc indirect block here\n");
+          // printf("i j %d %d\n", i, j);
+          // printf("address %u\n", (uint32_t)le32toh(in->double_indirect_block));
+          // printf("address %u\n", (uint32_t)le32toh(dbl->addresses[i]));
+          // printf("address %u\n", (uint32_t)le32toh(sib->addresses[j]));
+          if((int32_t)le32toh(sib->addresses[j]) <0){
+            struct data_block *db = (struct data_block *)(map + (int64_t)le32toh(sib->addresses[j]) * 4096);
+            
+            db->type = htole32(4);
+
+            calcul_sha1(db->data, 4000, db->sha1);
             bitmap_dealloc(map, sib->addresses[j]);
             sib->addresses[j] = htole32(-1);
             incremente_lbl(map);
           }
         }
+        // printf("dealloc indirect block\n");
+        struct address_block *dbl2 = (struct address_block *)(map + (int64_t)le32toh(dbl->addresses[i]) * 4096);
+        dbl2->type = htole32(4);
+        calcul_sha1(dbl2->addresses, 4000, dbl2->sha1);
         bitmap_dealloc(map, dbl->addresses[i]);
         dbl->addresses[i] = htole32(-1);
         incremente_lbl(map);
       }
+      printf("dealloc double indirect block\n");
     }
     bitmap_dealloc(map, in->double_indirect_block);
     in->double_indirect_block = htole32(-1);
@@ -272,7 +302,7 @@ static int create_file(uint8_t *map, const char *filename)
   // Scan inodes
   for (int i = 0; i < nbi; i++)
   {
-    struct inode *in = (struct inode *)(map + (uint64_t)(base + i) * 4096);
+    struct inode *in = (struct inode *)(map + (int64_t)(base + i) * 4096);
     if (in->flags & 1)
     {
       if (strcmp(in->filename, filename) == 0)
@@ -293,7 +323,7 @@ static int create_file(uint8_t *map, const char *filename)
     return -1;
   }
   // Initialiser l'inode et l'allouer dans le bitmap
-  struct inode *in = (struct inode *)(map + (uint64_t)(base + free_idx) * 4096);
+  struct inode *in = (struct inode *)(map + (int64_t)(base + free_idx) * 4096);
   init_inode(in, filename, false);
   int32_t inode_blk = base + free_idx;
   printf("create file\n");
@@ -315,13 +345,13 @@ static int32_t get_last_data_block(uint8_t *map, struct inode *in) {
     return (int32_t)le32toh(in->direct_blocks[last_index]);
   }else{
     last_index -= 900;
-    struct address_block *dbl = (struct address_block *)(map + (uint64_t)le32toh(in->double_indirect_block) * 4096);
+    struct address_block *dbl = (struct address_block *)(map + (int64_t)le32toh(in->double_indirect_block) * 4096);
     if(le32toh(dbl->type) == 6){
       return le32toh(dbl->addresses[last_index]);
     }else{
       int outer = last_index / 1000;
       int inner = last_index % 1000;
-      struct address_block *sib = (struct address_block *)(map + (uint64_t)le32toh(dbl->addresses[outer]) * 4096);
+      struct address_block *sib = (struct address_block *)(map + (int64_t)le32toh(dbl->addresses[outer]) * 4096);
       return le32toh(sib->addresses[inner]);
     }
   }
@@ -339,7 +369,7 @@ static int32_t get_last_data_block_null(uint8_t *map, struct inode *in) {
     if(last_index >= 900){
       int32_t dbl_blk = alloc_data_block(map);
       in->double_indirect_block = htole32(dbl_blk);
-      struct address_block *dbl = (struct address_block *)(map + (uint64_t)dbl_blk * 4096);
+      struct address_block *dbl = (struct address_block *)(map + (int64_t)dbl_blk * 4096);
       memset(dbl->addresses, -1, sizeof(dbl->addresses));
       calcul_sha1(dbl->addresses, 4000, dbl->sha1);
       dbl->type = htole32(6);
@@ -351,17 +381,17 @@ static int32_t get_last_data_block_null(uint8_t *map, struct inode *in) {
   }else{
     rec1:
     last_index -= 900;
-    struct address_block *dbl = (struct address_block *)(map + (uint64_t)in->double_indirect_block * 4096);
+    struct address_block *dbl = (struct address_block *)(map + (int64_t)in->double_indirect_block * 4096);
     if(le32toh(dbl->type) == 6){
       if(last_index >= 1000){
         int32_t save = in->double_indirect_block; // Pas besoin de conversion, on garde juste la valeur telle quelle
         int32_t dbl_blk = alloc_data_block(map);
         in->double_indirect_block = htole32(dbl_blk);
-        struct address_block *dbl2 = (struct address_block *)(map + (uint64_t)dbl_blk * 4096);
+        struct address_block *dbl2 = (struct address_block *)(map + (int64_t)dbl_blk * 4096);
         memset(dbl2->addresses, -1, sizeof(dbl2->addresses));
-        calcul_sha1(dbl2->addresses, 4000, dbl2->sha1);
         dbl2->type = htole32(7);
         dbl2->addresses[0] = save;
+        calcul_sha1(dbl2->addresses, 4000, dbl2->sha1);
         dbl = dbl2;
         goto rec2;
       }
@@ -377,13 +407,13 @@ static int32_t get_last_data_block_null(uint8_t *map, struct inode *in) {
       if((int32_t)le32toh(dbl->addresses[outer]) == -1){
         int32_t dbl_blk = alloc_data_block(map);
         dbl->addresses[outer] = htole32(dbl_blk);
-        struct address_block *dbl2 = (struct address_block *)(map + (uint64_t)dbl_blk * 4096);
+        struct address_block *dbl2 = (struct address_block *)(map + (int64_t)dbl_blk * 4096);
         memset(dbl2->addresses, -1, sizeof(dbl2->addresses));
         calcul_sha1(dbl2->addresses, 4000, dbl2->sha1);
         dbl2->type = htole32(6);
       }
 
-      struct address_block *sib = (struct address_block *)(map + (uint64_t)le32toh(dbl->addresses[outer]) * 4096);
+      struct address_block *sib = (struct address_block *)(map + (int64_t)le32toh(dbl->addresses[outer]) * 4096);
       
       if((int32_t)le32toh(sib->addresses[inner]) == -1){
         int32_t dbl_blk = alloc_data_block(map);
@@ -392,6 +422,16 @@ static int32_t get_last_data_block_null(uint8_t *map, struct inode *in) {
       return le32toh(sib->addresses[inner]);
     }
   }
+}
+
+void afficher_bloc(const uint8_t *bloc, size_t taille) {
+  for (size_t i = 0; i < taille; i++) {
+      printf("%02x ", bloc[i]);
+      if ((i + 1) % 16 == 0) { // Affiche 16 octets par ligne
+          printf("\n");
+      }
+  }
+  printf("\n");
 }
 
 

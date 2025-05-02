@@ -231,11 +231,22 @@ int main(int argc, char *argv[])
   }
   else if (strcmp(command, "addinput") == 0)
   {
-    return cmd_addinput(argc, argv);
+    if (argc < 3)
+    {
+      fprintf(stderr, "Erreur : la commande 'addinput' nécessite au moins 2 arguments.\n");
+      return 1;
+    }
+    const char *filename = argv[2];
+    if (strncmp(filename, "//", 2) != 0)
+    {
+      fprintf(stderr, "Erreur: Le nom de fichier interne doit commencer par \"//\".\n");
+      return 1;
+    }
+    return cmd_addinput(fsname, filename);
   }
   else if (strcmp(command, "fsck") == 0)
   {
-    return cmd_fsck(argc, argv);
+    return cmd_fsck(fsname);
   }
   else if (strcmp(command, "mount") == 0)
   {
