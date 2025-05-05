@@ -2,11 +2,13 @@
 #include "../include/utilitaires.h"
 
 volatile sig_atomic_t keep_running = 1;
-void handle_sigterm(int sig) {
+void handle_sigterm(int sig)
+{
   (void)sig;
   keep_running = 0;
 }
-void handle_sigint(int sig) {
+void handle_sigint(int sig)
+{
   (void)sig;
   raise(SIGTERM);
 }
@@ -33,14 +35,14 @@ int cmd_mkfs(const char *fsname, int nbi, int nba)
   int fd = open(fsname, O_RDWR | O_CREAT | O_TRUNC, 0666);
   if (fd < 0)
   {
-    perror("open");
-    return 1;
+    return print_error("open: erreur d'ouverture du fichier");
   }
   int64_t filesize = (int64_t)nbb * 4096;
 
   if (ftruncate(fd, filesize) < 0)
   {
-    perror("ftruncate");
+    print_error("ftruncate: erreur");
+    close(fd);
     return 1;
   }
 
@@ -48,7 +50,8 @@ int cmd_mkfs(const char *fsname, int nbi, int nba)
   void *map = mmap(NULL, filesize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
   if (map == MAP_FAILED)
   {
-    perror("mmap");
+    print_error("mmap: erreur");
+    close(fd);
     return 1;
   }
 
@@ -56,16 +59,13 @@ int cmd_mkfs(const char *fsname, int nbi, int nba)
   struct pignoufs *sb = (struct pignoufs *)map;
   memset(sb, 0, sizeof(*sb));
   memcpy(sb->magic, "pignoufs", 8);
-  sb->nb_b = htole32(nbb);
-  sb->nb_i = htole32(nbi);
-  sb->nb_a = htole32(nba);
-  sb->nb_l = htole32(nba);
-  sb->nb_f = htole32(0);
-  // SHA1 + type
-  uint8_t *sha1 = (uint8_t *)map;
-  calcul_sha1(sha1, 4000, sha1 + 4000);
-  struct bitmap_block *bb = (struct bitmap_block *)(sha1 + 4000);
-  bb->type = htole32(1);
+  sb->nb_b = TO_LE32(nbb);
+  sb->nb_i = TO_LE32(nbi);
+  sb->nb_a = TO_LE32(nba);
+  sb->nb_l = TO_LE32(nba);
+  sb->nb_f = TO_LE32(0);
+  calcul_sha1(sb, 4000, sb->sha1);
+  sb->type = TO_LE32(1);
 
   // 2) Blocs de bitmap
   for (int32_t i = 0; i < nb1; i++)
@@ -81,29 +81,35 @@ int cmd_mkfs(const char *fsname, int nbi, int nba)
         bb->bits[j / 8] |= (1 << (j % 8));
     }
     calcul_sha1(bb->bits, 4000, bb->sha1);
-    bb->type = htole32(2);
+    bb->type = TO_LE32(2);
   }
 
   // 3) Blocs d'inodes
   for (int32_t i = 0; i < nbi; i++)
   {
-    struct inode *in = (struct inode *)((uint8_t *)map + (int64_t)(1 + nb1 + i) * 4096);
+    struct inode *in = get_inode(map, 1 + nb1, i);
     memset(in, 0, sizeof(*in)); // marquer l'inode comme libre
     calcul_sha1(in, 4000, in->sha1);
-    in->type = htole32(3);
+    in->type = TO_LE32(3);
   }
 
   // 4) Blocs de données
   for (int32_t i = 0; i < nba; i++)
   {
-    struct data_block *db = (struct data_block *)((uint8_t *)map + (int64_t)(1 + nb1 + nbi + i) * 4096);
+    struct data_block *db = get_data_block(map, 1 + nb1 + nbi + i);
     memset(db->data, 0, sizeof(db->data));
     calcul_sha1(db->data, 4000, db->sha1);
-    db->type = htole32(4);
+    db->type = TO_LE32(4);
   }
 
   msync(map, filesize, MS_SYNC);
-  munmap(map, filesize);
+  int er = munmap(map, filesize);
+  if (er < 0)
+  {
+    print_error("munmap: erreur");
+    close(fd);
+    return 1;
+  }
   close(fd);
 
   printf("Système de fichiers %s créé avec %d inodes et %d blocs allouables.\n", fsname, nbi, nba);
@@ -117,19 +123,15 @@ int cmd_ls(const char *fsname, const char *filename)
   size_t size;
   int fd = open_fs(fsname, &map, &size);
   if (fd < 0)
-    return 1;
-
+    return print_error("Erreur lors de l'ouverture du système de fichiers");
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
-
-  int32_t base = 1 + nb1;
   int found = 0;
   for (int i = 0; i < nbi; i++)
   {
-    struct inode *in = (struct inode *)(map + (int64_t)(base + i) * 4096);
+    struct inode *in = get_inode(map, 1 + nb1, i);
     if (in->flags & 1)
     {
-
       if (filename)
       {
         if (strcmp(in->filename, filename) == 0)
@@ -139,7 +141,6 @@ int cmd_ls(const char *fsname, const char *filename)
           perm[1] = (in->flags & (1 << 2)) ? 'w' : '-';
           perm[2] = (in->flags & (1 << 3)) ? 'l' : '-';
           perm[3] = (in->flags & (1 << 4)) ? 'l' : '-';
-          // printf("here\n");
           time_t mod_time = (time_t)in->modification_time;
           struct tm tm_buf;
           struct tm *tm = localtime_r(&mod_time, &tm_buf);
@@ -148,7 +149,6 @@ int cmd_ls(const char *fsname, const char *filename)
           {
             strftime(buf, sizeof buf, "%Y-%m-%d %H:%M", tm);
           }
-
           printf("%s %10u %s %s\n", perm, in->file_size, buf, filename);
           found = 1;
           break;
@@ -163,7 +163,7 @@ int cmd_ls(const char *fsname, const char *filename)
 
   if (filename && !found)
   {
-    printf("%s introuvable\n", filename);
+    print_error("Fichier introuvable");
     close_fs(fd, map, size);
     return 1;
   }
@@ -176,10 +176,11 @@ int cmd_df(const char *fsname)
   uint8_t *map;
   size_t size;
   int fd = open_fs(fsname, &map, &size);
-  if (fd < 0) return 1;
-
+  if (fd < 0)
+    return print_error("Erreur lors de l'ouverture du système de fichiers");
   struct pignoufs *sb = (struct pignoufs *)map;
-  printf("%d blocs de 4Kio libres\n", sb->nb_l);
+  printf("%d blocs allouables de libres\n", FROM_LE32(sb->nb_l));
+  printf("%d inodes libres\n", FROM_LE32(sb->nb_i) - FROM_LE32(sb->nb_f));
 
   close_fs(fd, map, size);
   return 0;
@@ -190,17 +191,18 @@ int cmd_cp(const char *fsname, const char *filename1, const char *filename2, boo
   uint8_t *map;
   size_t size;
   int fd = open_fs(fsname, &map, &size);
-  if (fd < 0) return 1;
+  if (fd < 0)
+    return print_error("Erreur lors de l'ouverture du système de fichiers");
 
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
-  
-  if(mode1 && mode2) // Si les deux fichiers sont internes
+
+  if (mode1 && mode2) // Si les deux fichiers sont internes
   {
     struct inode *in = find_inode(map, nb1, nbi, filename1);
     if (!in)
     {
-      printf("%s introuvable, impossible à copier\n", filename1);
+      print_error("Fichier source introuvable, impossible à copier");
       close_fs(fd, map, size);
       return 1;
     }
@@ -214,119 +216,144 @@ int cmd_cp(const char *fsname, const char *filename1, const char *filename2, boo
         return 1;
       }
       in2 = find_inode(map, nb1, nbi, filename2);
-    }else{
+    }
+    else
+    {
       dealloc_data_block(in2, map);
     }
-    for(int i = 0; i < 900; i++)
+    for (int i = 0; i < 900; i++)
     {
-      int32_t b = le32toh(in->direct_blocks[i]);
-      if (b < 0) break;
-      struct data_block *data_position = (struct data_block *)(map + (int64_t)b * 4096);
+      int32_t b = FROM_LE32(in->direct_blocks[i]);
+      if (b < 0)
+        break;
+      struct data_block *data_position = get_data_block(map, b);
       int32_t new_block = alloc_data_block(map);
-      struct data_block *new_data_position = (struct data_block *)(map + (int64_t)new_block * 4096);
+      struct data_block *new_data_position = get_data_block(map, new_block);
       memcpy(new_data_position->data, data_position->data, 4000);
-      in2->direct_blocks[i] = htole32(new_block);
-      in2->file_size = htole32(le32toh(in2->file_size) + 4000);
-      in2->modification_time = htole32(time(NULL));
+      in2->direct_blocks[i] = TO_LE32(new_block);
+      in2->file_size = TO_LE32(FROM_LE32(in2->file_size) + 4000);
+      in2->modification_time = TO_LE32(time(NULL));
     }
-    if((int32_t)le32toh(in->double_indirect_block) <0){
-      struct address_block *dbl = (struct address_block *)(map + (int64_t)le32toh(in->double_indirect_block) * 4096);
-      if(le32toh(dbl->type) == 6){
-        for(int i = 0; i < 1000; i++){
-          int32_t db = le32toh(dbl->addresses[i]);
-          if (db < 0) break;
-          struct data_block *data_position2 = (struct data_block *)(map + (int64_t)db * 4096);
+    if ((int32_t)FROM_LE32(in->double_indirect_block) >= 0)
+    {
+      struct address_block *dbl = get_address_block(map, FROM_LE32(in->double_indirect_block));
+      if (FROM_LE32(dbl->type) == 6)
+      {
+        for (int i = 0; i < 1000; i++)
+        {
+          int32_t db = FROM_LE32(dbl->addresses[i]);
+          if (db < 0)
+            break;
+          struct data_block *data_position2 = get_data_block(map, db);
           int32_t new_block = alloc_data_block(map);
-          struct data_block *new_data_position2 = (struct data_block *)(map + (int64_t)new_block * 4096);
+          struct data_block *new_data_position2 = get_data_block(map, new_block);
           memcpy(new_data_position2->data, data_position2->data, 4000);
-          in2->direct_blocks[i] = htole32(new_block);
-          in2->file_size = htole32(le32toh(in2->file_size) + 4000);
-          in2->modification_time = htole32(time(NULL));
+          in2->direct_blocks[i] = TO_LE32(new_block);
+          in2->file_size = TO_LE32(FROM_LE32(in2->file_size) + 4000);
+          in2->modification_time = TO_LE32(time(NULL));
         }
-      }else{
-        for(int i = 0; i < 1000; i++){
-          int32_t db = le32toh(dbl->addresses[i]);
-          if (db < 0) break;
-          struct address_block *sib = (struct address_block *)(map + (int64_t)db * 4096);
-          for(int j = 0; j < 1000; j++){
-            int32_t db2 = le32toh(sib->addresses[j]);
-            if(db2 < 0) break;
-            struct data_block *data_position3 = (struct data_block *)(map + (int64_t)db2 * 4096);
+      }
+      else
+      {
+        for (int i = 0; i < 1000; i++)
+        {
+          int32_t db = FROM_LE32(dbl->addresses[i]);
+          if (db < 0)
+            break;
+          struct address_block *sib = get_address_block(map, db);
+          for (int j = 0; j < 1000; j++)
+          {
+            int32_t db2 = FROM_LE32(sib->addresses[j]);
+            if (db2 < 0)
+              break;
+            struct data_block *data_position3 = get_data_block(map, db2);
             int32_t new_block = alloc_data_block(map);
-            struct data_block *new_data_position3 = (struct data_block *)(map + (int64_t)new_block * 4096);
+            struct data_block *new_data_position3 = get_data_block(map, new_block);
             memcpy(new_data_position3->data, data_position3->data, 4000);
-            in2->direct_blocks[i] = htole32(new_block);
-            in2->file_size = htole32(le32toh(in2->file_size) + 4000);
-            in2->modification_time = htole32(time(NULL));
+            in2->direct_blocks[i] = TO_LE32(new_block);
+            in2->file_size = TO_LE32(FROM_LE32(in2->file_size) + 4000);
+            in2->modification_time = TO_LE32(time(NULL));
           }
         }
       }
     }
-  }else if(mode1 && !mode2) // Si le premier fichier est interne et le second externe
+  }
+  else if (mode1 && !mode2) // Si le premier fichier est interne et le second externe
   {
     struct inode *in = find_inode(map, nb1, nbi, filename1);
     if (!in)
     {
-      printf("%s introuvable, impossible à copier\n", filename1);
+      print_error("Fichier source introuvable, impossible à copier");
       close_fs(fd, map, size);
       return 1;
     }
-    int32_t file_size = le32toh(in->file_size);
+    int32_t file_size = FROM_LE32(in->file_size);
     int fd2 = open(filename2, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fd2 < 0)
     {
-      perror("open");
+      print_error("open: erreur d'ouverture du fichier externe");
       close_fs(fd, map, size);
       return 1;
     }
-    for(int i = 0; i < 900 && file_size > 0; i++)
+    for (int i = 0; i < 900 && file_size > 0; i++)
     {
-      int32_t b = le32toh(in->direct_blocks[i]);
-      if (b < 0) break;
-      uint8_t *data_position = map + (int64_t)b * 4096;
+      int32_t b = FROM_LE32(in->direct_blocks[i]);
+      if (b < 0)
+        break;
+      uint8_t *data_position = (uint8_t *)get_data_block(map, b);
       uint32_t buffer = file_size < 4000 ? file_size : 4000;
       int written = write(fd2, data_position, buffer);
       if (written == -1)
       {
-        perror("write");
+        print_error("write: erreur d'écriture");
         close_fs(fd, map, size);
         close(fd2);
         return 1;
       }
       file_size -= buffer;
     }
-    if((int32_t)le32toh(in->double_indirect_block) <0){
-      struct address_block *dbl = (struct address_block *)(map + (int64_t)le32toh(in->double_indirect_block) * 4096);
-      if(le32toh(dbl->type) == 6){
-        for(int i = 0; i < 1000 && file_size > 0; i++){
-          int32_t db = le32toh(dbl->addresses[i]);
-          if (db < 0) break;
-          uint8_t *data_position2 = map + (int64_t)db * 4096;
+    if ((int32_t)FROM_LE32(in->double_indirect_block) < 0)
+    {
+      struct address_block *dbl = get_address_block(map, FROM_LE32(in->double_indirect_block));
+      if (FROM_LE32(dbl->type) == 6)
+      {
+        for (int i = 0; i < 1000 && file_size > 0; i++)
+        {
+          int32_t db = FROM_LE32(dbl->addresses[i]);
+          if (db < 0)
+            break;
+          uint8_t *data_position2 = (uint8_t *)get_data_block(map, db);
           uint32_t buffer = file_size < 4000 ? file_size : 4000;
           int written = write(fd2, data_position2, buffer);
           if (written == -1)
           {
-            perror("write");
+            print_error("write: erreur d'écriture");
             close_fs(fd, map, size);
             close(fd2);
             return 1;
           }
           file_size -= buffer;
         }
-      }else{
-        for(int i = 0; i < 1000 && file_size > 0; i++){
-          int32_t db = le32toh(dbl->addresses[i]);
-          if (db < 0) break;
-          struct address_block *sib = (struct address_block *)(map + (int64_t)db * 4096);
-          for(int j = 0; j < 1000 && file_size > 0; j++){
-            int32_t db2 = le32toh(sib->addresses[j]);
-            if(db2 < 0) break;
-            uint8_t *data_position3 = map + (int64_t)db2 * 4096;
+      }
+      else
+      {
+        for (int i = 0; i < 1000 && file_size > 0; i++)
+        {
+          int32_t db = FROM_LE32(dbl->addresses[i]);
+          if (db < 0)
+            break;
+          struct address_block *sib = get_address_block(map, db);
+          for (int j = 0; j < 1000 && file_size > 0; j++)
+          {
+            int32_t db2 = FROM_LE32(sib->addresses[j]);
+            if (db2 < 0)
+              break;
+            struct data_block *data_position3 = get_data_block(map, db2);
             uint32_t buffer = file_size < 4000 ? file_size : 4000;
-            int written = write(fd2, data_position3, buffer);
+            int written = write(fd2, data_position3->data, buffer);
             if (written == -1)
             {
-              perror("write");
+              print_error("write: erreur d'écriture");
               close_fs(fd, map, size);
               close(fd2);
               return 1;
@@ -337,12 +364,13 @@ int cmd_cp(const char *fsname, const char *filename1, const char *filename2, boo
       }
     }
     close(fd2);
-  }else // Si le premier fichier est externe et le second interne
+  }
+  else // Si le premier fichier est externe et le second interne
   {
     int fd2 = open(filename1, O_RDONLY);
     if (fd2 < 0)
     {
-      perror("open");
+      print_error("open: erreur d'ouverture du fichier externe");
       close_fs(fd, map, size);
       return 1;
     }
@@ -357,28 +385,32 @@ int cmd_cp(const char *fsname, const char *filename1, const char *filename2, boo
         return 1;
       }
       in = find_inode(map, nb1, nbi, filename2);
-    }else{
+    }
+    else
+    {
       dealloc_data_block(in, map);
     }
     uint32_t total = 0;
-    char buf[4000]; size_t r; 
+    char buf[4000];
+    size_t r;
     while ((r = read(fd2, buf, 4000)) > 0)
     {
       int32_t b = get_last_data_block_null(map, in);
-      if (b == -2) {
-        perror("Erreur: pas de blocs de données libres disponibles\n");
+      if (b == -2)
+      {
+        print_error("Erreur: pas de blocs de données libres disponibles");
         break;
       }
-      struct data_block *db = (struct data_block *)(map + (int64_t)b * 4096);
+      struct data_block *db = get_data_block(map, b);
       memset(db->data, 0, sizeof(db->data));
       memcpy(db->data, buf, r);
       calcul_sha1(db->data, 4000, db->sha1);
-      db->type = htole32(5);
+      db->type = TO_LE32(5);
       total += r;
-      in->file_size = htole32(total);
+      in->file_size = TO_LE32(total);
     }
-    in->file_size = htole32(total);
-    in->modification_time = htole32(time(NULL));
+    in->file_size = TO_LE32(total);
+    in->modification_time = TO_LE32(time(NULL));
     calcul_sha1(in, 4000, in->sha1);
     close(fd2);
   }
@@ -391,14 +423,15 @@ int cmd_rm(const char *fsname, const char *filename)
   uint8_t *map;
   size_t size;
   int fd = open_fs(fsname, &map, &size);
-  if (fd < 0) return 1;
+  if (fd < 0)
+    return print_error("Erreur lors de l'ouverture du système de fichiers");
 
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
   struct inode *in = find_inode(map, nb1, nbi, filename);
-  if (!in || !(le32toh(in->flags) & 1))
+  if (!in || !(FROM_LE32(in->flags) & 1))
   {
-    printf("%s introuvable\n", filename);
+    print_error("Fichier introuvable");
     close_fs(fd, map, size);
     return 1;
   }
@@ -417,14 +450,15 @@ int cmd_lock(const char *fsname, const char *filename, const char *arg)
   uint8_t *map;
   size_t size;
   int fd = open_fs(fsname, &map, &size);
-  if (fd < 0) return 1;
+  if (fd < 0)
+    return print_error("Erreur lors de l'ouverture du système de fichiers");
 
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
   struct inode *in = find_inode(map, nb1, nbi, filename);
   if (!in)
   {
-    printf("%s introuvable\n", filename);
+    print_error("Fichier introuvable");
     close_fs(fd, map, size);
     return 1;
   }
@@ -458,14 +492,15 @@ int cmd_chmod(const char *fsname, const char *filename, const char *arg)
   uint8_t *map;
   size_t size;
   int fd = open_fs(fsname, &map, &size);
-  if (fd < 0) return 1;
+  if (fd < 0)
+    return print_error("Erreur lors de l'ouverture du système de fichiers");
 
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
   struct inode *in = find_inode(map, nb1, nbi, filename);
   if (!in)
   {
-    printf("%s introuvable\n", filename);
+    print_error("Fichier introuvable");
     close_fs(fd, map, size);
     return 1;
   }
@@ -493,32 +528,34 @@ int cmd_cat(const char *fsname, const char *filename)
   uint8_t *map;
   size_t size;
   int fd = open_fs(fsname, &map, &size);
-  if (fd < 0) return 1;
+  if (fd < 0)
+    return print_error("Erreur lors de l'ouverture du système de fichiers");
 
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
   struct inode *in = find_inode(map, nb1, nbi, filename);
-  if (!in || !(le32toh(in->flags) & 1))
+  if (!in || !(FROM_LE32(in->flags) & 1))
   {
-    printf("%s non trouvé\n", filename);
+    print_error("Fichier non trouvé");
     close_fs(fd, map, size);
     return 1;
   }
 
-  uint32_t file_size = le32toh(in->file_size);
+  uint32_t file_size = FROM_LE32(in->file_size);
   uint32_t remaining_data = file_size;
 
   // 1) Direct blocs
   for (int i = 0; i < 900 && remaining_data > 0; i++)
   {
-    int32_t b = le32toh(in->direct_blocks[i]);
-    if (b < 0) break;
-    uint8_t *data_position = map + (int64_t)b * 4096;
+    int32_t b = FROM_LE32(in->direct_blocks[i]);
+    if (b < 0)
+      break;
+    struct data_block *data_position = get_data_block(map, b);
     uint32_t buffer = remaining_data < 4000 ? remaining_data : 4000;
-    int written = write(STDOUT_FILENO, data_position, buffer);
+    int written = write(STDOUT_FILENO, data_position->data, buffer);
     if (written == -1)
     {
-      perror("write");
+      print_error("write: erreur d'écriture");
       close_fs(fd, map, size);
       return 1;
     }
@@ -531,46 +568,51 @@ int cmd_cat(const char *fsname, const char *filename)
   }
 
   // 2) Simple/Doucle indirect blocs
-  int32_t dib = le32toh(in->double_indirect_block);
+  int32_t dib = FROM_LE32(in->double_indirect_block);
   if (dib < 0)
   {
     goto end;
   }
-  struct address_block *dbl = (struct address_block *)(map + (int64_t)dib * 4096);
-  if(le32toh(dbl->type) == 6){
+  struct address_block *dbl = get_address_block(map, dib);
+  if (FROM_LE32(dbl->type) == 6)
+  {
     for (int i = 0; i < 1000 && remaining_data > 0; i++)
     {
-      int32_t db = le32toh(dbl->addresses[i]);
-      if (db < 0) break;
-      uint8_t *data_position2 = map + (int64_t)db * 4096;
+      int32_t db = FROM_LE32(dbl->addresses[i]);
+      if (db < 0)
+        break;
+      struct data_block *data_position2 = get_data_block(map, db);
       uint32_t buffer = remaining_data < 4000 ? remaining_data : 4000;
-      int written = write(STDOUT_FILENO, data_position2, buffer);
+      int written = write(STDOUT_FILENO, data_position2->data, buffer);
       if (written == -1)
       {
-        perror("write");
+        print_error("write: erreur d'écriture");
         close_fs(fd, map, size);
         return 1;
       }
       remaining_data -= buffer;
     }
     goto end;
-  }else{
+  }
+  else
+  {
     for (int i = 0; i < 1000 && remaining_data > 0; i++)
     {
-      int32_t db = le32toh(dbl->addresses[i]);
-      if (db < 0) break;
-      uint8_t *data_position2 = map + (int64_t)db * 4096;
-      struct address_block *ab2 = (struct address_block *)data_position2;
+      int32_t db = FROM_LE32(dbl->addresses[i]);
+      if (db < 0)
+        break;
+      struct address_block *ab2 = get_address_block(map, db);
       for (int j = 0; j < 1000 && remaining_data > 0; j++)
       {
-        int32_t db2 = le32toh(ab2->addresses[j]);
-        if (db2 < 0) break;
-        uint8_t *data_position3 = map + (int64_t)db2 * 4096;
+        int32_t db2 = FROM_LE32(ab2->addresses[j]);
+        if (db2 < 0)
+          break;
+        struct data_block *data_position3 = get_data_block(map, db2);
         uint32_t buffer = remaining_data < 4000 ? remaining_data : 4000;
-        int written = write(STDOUT_FILENO, data_position3, buffer);
+        int written = write(STDOUT_FILENO, data_position3->data, buffer);
         if (written == -1)
         {
-          perror("write");
+          print_error("write: erreur d'écriture");
           close_fs(fd, map, size);
           return 1;
         }
@@ -578,7 +620,7 @@ int cmd_cat(const char *fsname, const char *filename)
       }
     }
   }
-  end:
+end:
   close_fs(fd, map, size);
   return 0;
 }
@@ -588,7 +630,8 @@ int cmd_input(const char *fsname, const char *filename)
   uint8_t *map;
   size_t size;
   int fd = open_fs(fsname, &map, &size);
-  if (fd < 0) return 1;
+  if (fd < 0)
+    return print_error("Erreur lors de l'ouverture du système de fichiers");
 
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
@@ -598,43 +641,49 @@ int cmd_input(const char *fsname, const char *filename)
     int status = create_file(map, filename);
     if (status == -1)
     {
-      return 1;
+      return print_error("Erreur lors de la création du fichier");
     }
     in = find_inode(map, nb1, nbi, filename);
-  }else{
+  }
+  else
+  {
     dealloc_data_block(in, map);
   }
 
-  char buf[4000]; 
+  char buf[4000];
   size_t r;
-  uint32_t total = le32toh(in->file_size);
+  uint32_t total = FROM_LE32(in->file_size);
   while ((r = read(STDIN_FILENO, buf, 4000)) > 0)
   {
     uint32_t offset = (total % 4000);
-    if (offset > 0) {
+    if (offset > 0)
+    {
       int32_t last = get_last_data_block(map, in);
-      struct data_block *db = (struct data_block *)(map + (int64_t)last * 4096);
-      memcpy(db->data+offset, buf, r);
+      struct data_block *db = get_data_block(map, last);
+      memcpy(db->data + offset, buf, r);
       calcul_sha1(db->data, 4000, db->sha1);
       total += r;
-      in->file_size = htole32(total);
-    }else{
+      in->file_size = TO_LE32(total);
+    }
+    else
+    {
       int32_t b = get_last_data_block_null(map, in);
-      if (b == -2) {
-        perror("Erreur: pas de blocs de données libres disponibles\n");
+      if (b == -2)
+      {
+        print_error("Erreur: pas de blocs de données libres disponibles");
         break;
       }
-      struct data_block *db = (struct data_block *)(map + (int64_t)b * 4096);
+      struct data_block *db = get_data_block(map, b);
       memset(db->data, 0, sizeof(db->data));
       memcpy(db->data, buf, r);
       calcul_sha1(db->data, 4000, db->sha1);
-      db->type = htole32(5);
+      db->type = TO_LE32(5);
       total += r;
-      in->file_size = htole32(total);
+      in->file_size = TO_LE32(total);
     }
   }
-  in->file_size = htole32(total);
-  in->modification_time = htole32(time(NULL));
+  in->file_size = TO_LE32(total);
+  in->modification_time = TO_LE32(time(NULL));
   calcul_sha1(in, 4000, in->sha1);
   close_fs(fd, map, size);
   return 0;
@@ -645,7 +694,8 @@ int cmd_add(const char *fsname, const char *filename_ext, const char *filename_i
   uint8_t *map;
   size_t size;
   int fd = open_fs(fsname, &map, &size);
-  if (fd < 0) return 1;
+  if (fd < 0)
+    return print_error("Erreur lors de l'ouverture du système de fichiers");
 
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
@@ -653,7 +703,7 @@ int cmd_add(const char *fsname, const char *filename_ext, const char *filename_i
 
   if (inf < 0)
   {
-    perror("open source");
+    print_error("open source: erreur d'ouverture du fichier externe");
     return 1;
   }
 
@@ -663,67 +713,78 @@ int cmd_add(const char *fsname, const char *filename_ext, const char *filename_i
     int status = create_file(map, filename_int);
     if (status == -1)
     {
-      return 1;
+      return print_error("Erreur lors de la création du fichier interne");
     }
     in = find_inode(map, nb1, nbi, filename_int);
   }
-  uint32_t total = le32toh(in->file_size);
+  uint32_t total = FROM_LE32(in->file_size);
   uint32_t offset = (total % 4000);
-  char buf[4000]; size_t r; 
-  if (offset > 0) {
+  char buf[4000];
+  size_t r;
+  if (offset > 0)
+  {
     int32_t last = get_last_data_block(map, in);
-    r = read(inf, buf, 4000-offset);
-    if ((int32_t)r == -1) {
-      perror("read source");
+    r = read(inf, buf, 4000 - offset);
+    if ((int32_t)r == -1)
+    {
+      print_error("read source: erreur de lecture du fichier externe");
       close_fs(fd, map, size);
       return 1;
     }
-    if (r == 0) {
+    if (r == 0)
+    {
       close_fs(fd, map, size);
       return 0;
     }
-    struct data_block *db = (struct data_block *)(map + (int64_t)last * 4096);
-    memcpy(db->data+offset, buf, r);
+    struct data_block *db = get_data_block(map, last);
+    memcpy(db->data + offset, buf, r);
     calcul_sha1(db->data, 4000, db->sha1);
     total += r;
-    in->file_size = htole32(total);
+    in->file_size = TO_LE32(total);
   }
 
-  while ((r = read(inf, buf, 4000)) > 0) {
+  while ((r = read(inf, buf, 4000)) > 0)
+  {
     int32_t b = get_last_data_block_null(map, in);
     // printf("b = %d\n", b);
-    if (b == -2) {
-      perror("Erreur: pas de blocs de données libres disponibles\n");
+    if (b == -2)
+    {
+      print_error("Erreur: pas de blocs de données libres disponibles");
       break;
     }
-    struct data_block *db = (struct data_block *)(map + (int64_t)b * 4096);
+    struct data_block *db = get_data_block(map, b);
     memset(db->data, 0, sizeof(db->data));
     memcpy(db->data, buf, r);
     calcul_sha1(db->data, 4000, db->sha1);
-    db->type = htole32(5);
+    db->type = TO_LE32(5);
     total += r;
-    in->file_size = htole32(total);
+    in->file_size = TO_LE32(total);
   }
 
   // recalculer le SHA1 de des blocs d'adressage
-  if((int32_t)le32toh(in->double_indirect_block) >= 0)
+  if ((int32_t)FROM_LE32(in->double_indirect_block) >= 0)
   {
-    struct address_block *dbl = (struct address_block *)(map + (int64_t)le32toh(in->double_indirect_block) * 4096);
-    if(le32toh(dbl->type) == 6){
+    struct address_block *dbl = get_address_block(map, FROM_LE32(in->double_indirect_block));
+    if (FROM_LE32(dbl->type) == 6)
+    {
       calcul_sha1(dbl->addresses, 4000, dbl->sha1);
-    }else{
-      for(int i = 0; i < 1000; i++){
-        int32_t db = le32toh(dbl->addresses[i]);
-        if (db < 0) break;
-        struct address_block *sib = (struct address_block *)(map + (int64_t)db * 4096);
+    }
+    else
+    {
+      for (int i = 0; i < 1000; i++)
+      {
+        int32_t db = FROM_LE32(dbl->addresses[i]);
+        if (db < 0)
+          break;
+        struct address_block *sib = get_address_block(map, db);
         calcul_sha1(sib->addresses, 4000, sib->sha1);
       }
       calcul_sha1(dbl->addresses, 4000, dbl->sha1);
     }
   }
 
-  in->file_size = htole32(total);
-  in->modification_time = htole32(time(NULL));
+  in->file_size = TO_LE32(total);
+  in->modification_time = TO_LE32(time(NULL));
   calcul_sha1(in, 4000, in->sha1);
   close_fs(fd, map, size);
   close(inf);
@@ -736,7 +797,8 @@ int cmd_addinput(const char *fsname, const char *filename)
   uint8_t *map;
   size_t size;
   int fd = open_fs(fsname, &map, &size);
-  if (fd < 0) return 1;
+  if (fd < 0)
+    return print_error("Erreur lors de l'ouverture du système de fichiers");
 
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
@@ -746,55 +808,65 @@ int cmd_addinput(const char *fsname, const char *filename)
     int status = create_file(map, filename);
     if (status == -1)
     {
-      return 1;
+      return print_error("Erreur lors de la création du fichier");
     }
     in = find_inode(map, nb1, nbi, filename);
   }
-  uint32_t total = le32toh(in->file_size);
-  char buf[4000]; size_t r;
+  uint32_t total = FROM_LE32(in->file_size);
+  char buf[4000];
+  size_t r;
   while ((r = read(STDIN_FILENO, buf, 4000)) > 0)
   {
     uint32_t offset = (total % 4000);
-    if (offset > 0) {
+    if (offset > 0)
+    {
       int32_t last = get_last_data_block(map, in);
-      struct data_block *db = (struct data_block *)(map + (int64_t)last * 4096);
-      memcpy(db->data+offset, buf, r);
+      struct data_block *db = get_data_block(map, last);
+      memcpy(db->data + offset, buf, r);
       calcul_sha1(db->data, 4000, db->sha1);
       total += r;
-      in->file_size = htole32(total);
-    }else{
+      in->file_size = TO_LE32(total);
+    }
+    else
+    {
       int32_t b = get_last_data_block_null(map, in);
-      if (b == -2) {
-        perror("Erreur: pas de blocs de données libres disponibles\n");
+      if (b == -2)
+      {
+        print_error("Erreur: pas de blocs de données libres disponibles");
         break;
       }
-      struct data_block *db = (struct data_block *)(map + (int64_t)b * 4096);
+      struct data_block *db = get_data_block(map, b);
       memset(db->data, 0, sizeof(db->data));
       memcpy(db->data, buf, r);
       calcul_sha1(db->data, 4000, db->sha1);
-      db->type = htole32(5);
+      db->type = TO_LE32(5);
       total += r;
-      in->file_size = htole32(total);
+      in->file_size = TO_LE32(total);
     }
   }
   // recalculer le SHA1 de des blocs d'adressage
-  if((int32_t)le32toh(in->double_indirect_block) >= 0)
+  if ((int32_t)FROM_LE32(in->double_indirect_block) >= 0)
   {
-    struct address_block *dbl = (struct address_block *)(map + (int64_t)le32toh(in->double_indirect_block) * 4096);
-    if(le32toh(dbl->type) == 6){
+    struct address_block *dbl = get_address_block(map, FROM_LE32(in->double_indirect_block));
+    if (FROM_LE32(dbl->type) == 6)
+    {
       calcul_sha1(dbl->addresses, 4000, dbl->sha1);
-    }else{
-      for(int i = 0; i < 1000; i++){
-        int32_t db = le32toh(dbl->addresses[i]);
-        if (db < 0) break;
-        struct address_block *sib = (struct address_block *)(map + (int64_t)db * 4096);
+    }
+    else
+    {
+      for (int i = 0; i < 1000; i++)
+      {
+        int32_t db = FROM_LE32(dbl->addresses[i]);
+        if (db < 0)
+          break;
+        struct address_block *sib = get_address_block(map, db);
         calcul_sha1(sib->addresses, 4000, sib->sha1);
       }
       calcul_sha1(dbl->addresses, 4000, dbl->sha1);
     }
   }
-  in->file_size = htole32(total);
-  in->modification_time = htole32(time(NULL));
+  in->file_size = TO_LE32(total);
+  in->modification_time = TO_LE32(time(NULL));
   calcul_sha1(in, 4000, in->sha1);
   close_fs(fd, map, size);
   return 0;
@@ -805,7 +877,8 @@ int cmd_fsck(const char *fsname)
   uint8_t *map;
   size_t size;
   int fd = open_fs(fsname, &map, &size);
-  if (fd < 0) return 1;
+  if (fd < 0)
+    return print_error("Erreur lors de l'ouverture du système de fichiers");
 
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
@@ -813,7 +886,7 @@ int cmd_fsck(const char *fsname)
 
   if (strncmp(sb->magic, "pignoufs", 8) != 0)
   {
-    printf("Erreur: le conteneur n'est pas un système de fichiers Pignoufs\n");
+    print_error("Erreur: le conteneur n'est pas un système de fichiers Pignoufs");
     close_fs(fd, map, size);
     return 1;
   }
@@ -821,66 +894,78 @@ int cmd_fsck(const char *fsname)
   for (int32_t i = 1; i < nbb; i++)
   {
     struct bitmap_block *bb = (struct bitmap_block *)((uint8_t *)map + (int64_t)(i) * 4096);
-    if (i <= nb1) 
+    if (i <= nb1)
     {
-      if (bb->type != htole32(2))
+      if (bb->type != TO_LE32(2))
       {
-        printf("Erreur: bloc de bitmap %d a un type incorrect\n", i);
+        print_error("Erreur: bloc de bitmap a un type incorrect");
         close_fs(fd, map, size);
         return 1;
       }
     }
     else if (i <= nb1 + nbi)
     {
-      if (bb->type != htole32(3))
+      if (bb->type != TO_LE32(3))
       {
-        printf("Erreur: bloc d'inode %d a un type incorrect\n", i);
+        print_error("Erreur: bloc d'inode a un type incorrect");
         close_fs(fd, map, size);
         return 1;
       }
       struct inode *in = (struct inode *)bb;
       if (in->flags & 1) // Si l'inode est allouée
       {
-        if(!check_bitmap_bit(map, i)){
-          printf("Erreur: inode %d est allouée mais pas marquée dans le bitmap\n", i);
+        if (!check_bitmap_bit(map, i))
+        {
+          print_error("Erreur: inode a un bloc de données non alloué");
           close_fs(fd, map, size);
           return 1;
         }
-        for(int j = 0; j < 900; j++)
+        for (int j = 0; j < 900; j++)
         {
-          int32_t b = le32toh(in->direct_blocks[j]);
-          if (b < 0) break;
+          int32_t b = FROM_LE32(in->direct_blocks[j]);
+          if (b < 0)
+            break;
           if (!check_bitmap_bit(map, b))
           {
-            printf("Erreur: inode %d a un bloc de données %d non alloué\n", i, b);
+            print_error("Erreur: inode a un bloc de données non alloué");
             close_fs(fd, map, size);
             return 1;
           }
         }
-        if((int32_t)le32toh(in->double_indirect_block) <0){
-          struct address_block *dbl = (struct address_block *)(map + (int64_t)le32toh(in->double_indirect_block) * 4096);
-          if(le32toh(dbl->type) == 6){
-            for(int j = 0; j < 1000; j++){
-              int32_t db = le32toh(dbl->addresses[j]);
-              if (db < 0) break;
+        if ((int32_t)FROM_LE32(in->double_indirect_block) < 0)
+        {
+          struct address_block *dbl = get_address_block(map, FROM_LE32(in->double_indirect_block));
+          if (FROM_LE32(dbl->type) == 6)
+          {
+            for (int j = 0; j < 1000; j++)
+            {
+              int32_t db = FROM_LE32(dbl->addresses[j]);
+              if (db < 0)
+                break;
               if (!check_bitmap_bit(map, db))
               {
-                printf("Erreur: inode %d a un bloc de données indirect %d non alloué\n", i, db);
+                print_error("Erreur: inode a un bloc de données indirect non alloué");
                 close_fs(fd, map, size);
                 return 1;
               }
             }
-          }else{
-            for(int j = 0; j < 1000; j++){
-              int32_t db = le32toh(dbl->addresses[j]);
-              if (db < 0) break;
-              struct address_block *sib = (struct address_block *)(map + (int64_t)db * 4096);
-              for(int k = 0; k < 1000; k++){
-                int32_t db2 = le32toh(sib->addresses[k]);
-                if(db2 < 0) break;
+          }
+          else
+          {
+            for (int j = 0; j < 1000; j++)
+            {
+              int32_t db = FROM_LE32(dbl->addresses[j]);
+              if (db < 0)
+                break;
+              struct address_block *sib = get_address_block(map, db);
+              for (int k = 0; k < 1000; k++)
+              {
+                int32_t db2 = FROM_LE32(sib->addresses[k]);
+                if (db2 < 0)
+                  break;
                 if (!check_bitmap_bit(map, db2))
                 {
-                  printf("Erreur: inode %d a un bloc de données indirect %d non alloué\n", i, db2);
+                  print_error("Erreur: inode a un bloc de données indirect non alloué");
                   close_fs(fd, map, size);
                   return 1;
                 }
@@ -892,21 +977,18 @@ int cmd_fsck(const char *fsname)
     }
     else
     {
-      if (bb->type < htole32(4) || bb->type > htole32(7)) 
+      if (bb->type < TO_LE32(4) || bb->type > TO_LE32(7))
       {
-        printf("Erreur: bloc de données %d a un type incorrect\n", i);
+        print_error("Erreur: bloc de données a un type incorrect");
         close_fs(fd, map, size);
         return 1;
       }
     }
-    uint8_t sha1[20]; 
+    uint8_t sha1[20];
     calcul_sha1(bb->bits, 4000, sha1);
     if (memcmp(bb->sha1, sha1, 20) != 0)
     {
-      // afficher_bloc(bb->bits, 4000);
-      printf("sha1 = %u\n", sha1);
-      printf("bb->sha1 = %u\n", bb->sha1);
-      printf("Erreur: bloc de bitmap %d a un SHA1 incorrect\n", i);
+      print_error("Erreur: bloc de bitmap a un SHA1 incorrect");
       close_fs(fd, map, size);
       return 1;
     }
