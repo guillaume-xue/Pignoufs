@@ -231,13 +231,36 @@ int cmd_cp(const char *fsname, const char *filename1, const char *filename2, boo
       int32_t b = FROM_LE32(in->direct_blocks[i]);
       if (b < 0)
         break;
+
+      // Verrouiller le bloc source
+      if (lock_block(fd, b * 4096, F_RDLCK) < 0)
+      {
+        print_error("Erreur lors du verrouillage du bloc source");
+        close_fs(fd, map, size);
+        return 1;
+      }
+
       struct data_block *data_position = get_data_block(map, b);
       int32_t new_block = alloc_data_block(map);
+
+      // Verrouiller le bloc destination
+      if (lock_block(fd, new_block * 4096, F_WRLCK) < 0)
+      {
+        print_error("Erreur lors du verrouillage du bloc destination");
+        unlock_block(fd, b * 4096);
+        close_fs(fd, map, size);
+        return 1;
+      }
+
       struct data_block *new_data_position = get_data_block(map, new_block);
       memcpy(new_data_position->data, data_position->data, 4000);
       in2->direct_blocks[i] = TO_LE32(new_block);
       in2->file_size = TO_LE32(FROM_LE32(in2->file_size) + 4000);
       in2->modification_time = TO_LE32(time(NULL));
+
+      // Déverrouiller les blocs
+      unlock_block(fd, b * 4096);
+      unlock_block(fd, new_block * 4096);
     }
     if ((int32_t)FROM_LE32(in->double_indirect_block) >= 0)
     {
@@ -249,13 +272,36 @@ int cmd_cp(const char *fsname, const char *filename1, const char *filename2, boo
           int32_t db = FROM_LE32(dbl->addresses[i]);
           if (db < 0)
             break;
+
+          // Verrouiller le bloc source
+          if (lock_block(fd, db * 4096, F_RDLCK) < 0)
+          {
+            print_error("Erreur lors du verrouillage du bloc source");
+            close_fs(fd, map, size);
+            return 1;
+          }
+
           struct data_block *data_position2 = get_data_block(map, db);
           int32_t new_block = alloc_data_block(map);
+
+          // Verrouiller le bloc destination
+          if (lock_block(fd, new_block * 4096, F_WRLCK) < 0)
+          {
+            print_error("Erreur lors du verrouillage du bloc destination");
+            unlock_block(fd, db * 4096);
+            close_fs(fd, map, size);
+            return 1;
+          }
+
           struct data_block *new_data_position2 = get_data_block(map, new_block);
           memcpy(new_data_position2->data, data_position2->data, 4000);
           in2->direct_blocks[i] = TO_LE32(new_block);
           in2->file_size = TO_LE32(FROM_LE32(in2->file_size) + 4000);
           in2->modification_time = TO_LE32(time(NULL));
+
+          // Déverrouiller les blocs
+          unlock_block(fd, db * 4096);
+          unlock_block(fd, new_block * 4096);
         }
       }
       else
@@ -265,20 +311,57 @@ int cmd_cp(const char *fsname, const char *filename1, const char *filename2, boo
           int32_t db = FROM_LE32(dbl->addresses[i]);
           if (db < 0)
             break;
+
+          // Verrouiller le bloc source
+          if (lock_block(fd, db * 4096, F_RDLCK) < 0)
+          {
+            print_error("Erreur lors du verrouillage du bloc source");
+            close_fs(fd, map, size);
+            return 1;
+          }
+
           struct address_block *sib = get_address_block(map, db);
           for (int j = 0; j < 1000; j++)
           {
             int32_t db2 = FROM_LE32(sib->addresses[j]);
             if (db2 < 0)
               break;
+
+            // Verrouiller le bloc source
+            if (lock_block(fd, db2 * 4096, F_RDLCK) < 0)
+            {
+              print_error("Erreur lors du verrouillage du bloc source");
+              unlock_block(fd, db * 4096);
+              close_fs(fd, map, size);
+              return 1;
+            }
+
             struct data_block *data_position3 = get_data_block(map, db2);
             int32_t new_block = alloc_data_block(map);
+
+            // Verrouiller le bloc destination
+            if (lock_block(fd, new_block * 4096, F_WRLCK) < 0)
+            {
+              print_error("Erreur lors du verrouillage du bloc destination");
+              unlock_block(fd, db2 * 4096);
+              unlock_block(fd, db * 4096);
+              close_fs(fd, map, size);
+              return 1;
+            }
+
             struct data_block *new_data_position3 = get_data_block(map, new_block);
             memcpy(new_data_position3->data, data_position3->data, 4000);
             in2->direct_blocks[i] = TO_LE32(new_block);
             in2->file_size = TO_LE32(FROM_LE32(in2->file_size) + 4000);
             in2->modification_time = TO_LE32(time(NULL));
+
+            // Déverrouiller les blocs
+            unlock_block(fd, db2 * 4096);
+            unlock_block(fd, new_block * 4096);
           }
+
+          // Déverrouiller le bloc source
+          unlock_block(fd, db * 4096);
         }
       }
     }
@@ -305,17 +388,31 @@ int cmd_cp(const char *fsname, const char *filename1, const char *filename2, boo
       int32_t b = FROM_LE32(in->direct_blocks[i]);
       if (b < 0)
         break;
+
+      // Verrouiller le bloc source
+      if (lock_block(fd, b * 4096, F_RDLCK) < 0)
+      {
+        print_error("Erreur lors du verrouillage du bloc source");
+        close_fs(fd, map, size);
+        close(fd2);
+        return 1;
+      }
+
       uint8_t *data_position = (uint8_t *)get_data_block(map, b);
       uint32_t buffer = file_size < 4000 ? file_size : 4000;
       int written = write(fd2, data_position, buffer);
       if (written == -1)
       {
         print_error("write: erreur d'écriture");
+        unlock_block(fd, b * 4096);
         close_fs(fd, map, size);
         close(fd2);
         return 1;
       }
       file_size -= buffer;
+
+      // Déverrouiller le bloc source
+      unlock_block(fd, b * 4096);
     }
     if ((int32_t)FROM_LE32(in->double_indirect_block) < 0)
     {
@@ -327,17 +424,31 @@ int cmd_cp(const char *fsname, const char *filename1, const char *filename2, boo
           int32_t db = FROM_LE32(dbl->addresses[i]);
           if (db < 0)
             break;
+
+          // Verrouiller le bloc source
+          if (lock_block(fd, db * 4096, F_RDLCK) < 0)
+          {
+            print_error("Erreur lors du verrouillage du bloc source");
+            close_fs(fd, map, size);
+            close(fd2);
+            return 1;
+          }
+
           uint8_t *data_position2 = (uint8_t *)get_data_block(map, db);
           uint32_t buffer = file_size < 4000 ? file_size : 4000;
           int written = write(fd2, data_position2, buffer);
           if (written == -1)
           {
             print_error("write: erreur d'écriture");
+            unlock_block(fd, db * 4096);
             close_fs(fd, map, size);
             close(fd2);
             return 1;
           }
           file_size -= buffer;
+
+          // Déverrouiller le bloc source
+          unlock_block(fd, db * 4096);
         }
       }
       else
@@ -347,24 +458,53 @@ int cmd_cp(const char *fsname, const char *filename1, const char *filename2, boo
           int32_t db = FROM_LE32(dbl->addresses[i]);
           if (db < 0)
             break;
+
+          // Verrouiller le bloc source
+          if (lock_block(fd, db * 4096, F_RDLCK) < 0)
+          {
+            print_error("Erreur lors du verrouillage du bloc source");
+            close_fs(fd, map, size);
+            close(fd2);
+            return 1;
+          }
+
           struct address_block *sib = get_address_block(map, db);
           for (int j = 0; j < 1000 && file_size > 0; j++)
           {
             int32_t db2 = FROM_LE32(sib->addresses[j]);
             if (db2 < 0)
               break;
+
+            // Verrouiller le bloc source
+            if (lock_block(fd, db2 * 4096, F_RDLCK) < 0)
+            {
+              print_error("Erreur lors du verrouillage du bloc source");
+              unlock_block(fd, db * 4096);
+              close_fs(fd, map, size);
+              close(fd2);
+              return 1;
+            }
+
             struct data_block *data_position3 = get_data_block(map, db2);
             uint32_t buffer = file_size < 4000 ? file_size : 4000;
             int written = write(fd2, data_position3->data, buffer);
             if (written == -1)
             {
               print_error("write: erreur d'écriture");
+              unlock_block(fd, db2 * 4096);
+              unlock_block(fd, db * 4096);
               close_fs(fd, map, size);
               close(fd2);
               return 1;
             }
             file_size -= buffer;
+
+            // Déverrouiller le bloc source
+            unlock_block(fd, db2 * 4096);
           }
+
+          // Déverrouiller le bloc source
+          unlock_block(fd, db * 4096);
         }
       }
     }
@@ -406,6 +546,16 @@ int cmd_cp(const char *fsname, const char *filename1, const char *filename2, boo
         print_error("Erreur: pas de blocs de données libres disponibles");
         break;
       }
+
+      // Verrouiller le bloc destination
+      if (lock_block(fd, b * 4096, F_WRLCK) < 0)
+      {
+        print_error("Erreur lors du verrouillage du bloc destination");
+        close_fs(fd, map, size);
+        close(fd2);
+        return 1;
+      }
+
       struct data_block *db = get_data_block(map, b);
       memset(db->data, 0, sizeof(db->data));
       memcpy(db->data, buf, r);
@@ -413,6 +563,9 @@ int cmd_cp(const char *fsname, const char *filename1, const char *filename2, boo
       db->type = TO_LE32(5);
       total += r;
       in->file_size = TO_LE32(total);
+
+      // Déverrouiller le bloc destination
+      unlock_block(fd, b * 4096);
     }
     in->file_size = TO_LE32(total);
     in->modification_time = TO_LE32(time(NULL));
