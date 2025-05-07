@@ -4,11 +4,13 @@
 #include "structures.h"
 
 // Gestion centralisée des erreurs
-static int print_error(const char *msg) {
+static int print_error(const char *msg)
+{
   fprintf(stderr, "%s\n", msg);
   return 1;
 }
-static void fatal_error(const char *msg) {
+static void fatal_error(const char *msg)
+{
   fprintf(stderr, "%s\n", msg);
   exit(EXIT_FAILURE);
 }
@@ -17,21 +19,25 @@ static void fatal_error(const char *msg) {
 static void calcul_sha1(const void *data, size_t len, uint8_t *out)
 {
   EVP_MD_CTX *ctx = EVP_MD_CTX_new(); // Crée un contexte pour le calcul
-  if (!ctx) {
+  if (!ctx)
+  {
     perror("Erreur : Impossible de créer le contexte EVP");
     return;
   }
-  if (EVP_DigestInit_ex(ctx, EVP_sha1(), NULL) != 1) {
+  if (EVP_DigestInit_ex(ctx, EVP_sha1(), NULL) != 1)
+  {
     perror("Erreur : EVP_DigestInit_ex a échoué");
     EVP_MD_CTX_free(ctx);
     return;
   }
-  if (EVP_DigestUpdate(ctx, data, len) != 1) {
+  if (EVP_DigestUpdate(ctx, data, len) != 1)
+  {
     perror("Erreur : EVP_DigestUpdate a échoué");
     EVP_MD_CTX_free(ctx);
     return;
   }
-  if (EVP_DigestFinal_ex(ctx, out, NULL) != 1) {
+  if (EVP_DigestFinal_ex(ctx, out, NULL) != 1)
+  {
     perror("Erreur : EVP_DigestFinal_ex a échoué");
     EVP_MD_CTX_free(ctx);
     return;
@@ -271,9 +277,10 @@ static void dealloc_data_block(struct inode *in, uint8_t *map)
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
 
-  for(int i = 0; i < 900; i++)
+  for (int i = 0; i < 900; i++)
   {
-    if((int32_t)FROM_LE32(in->direct_blocks[i]) >= 0){
+    if ((int32_t)FROM_LE32(in->direct_blocks[i]) >= 0)
+    {
       struct data_block *db = get_data_block(map, in->direct_blocks[i]);
       db->type = TO_LE32(4);
       calcul_sha1(db->data, 4000, db->sha1);
@@ -282,11 +289,14 @@ static void dealloc_data_block(struct inode *in, uint8_t *map)
       incremente_lbl(map);
     }
   }
-  if((int32_t)FROM_LE32(in->double_indirect_block) >= 0){
+  if ((int32_t)FROM_LE32(in->double_indirect_block) >= 0)
+  {
     struct address_block *dbl = get_address_block(map, FROM_LE32(in->double_indirect_block));
-    if((int32_t)FROM_LE32(dbl->type) == 6){
-      for(int i = 0; i < 1000; i++){
-        if(dbl->addresses[i] < 0)
+    if ((int32_t)FROM_LE32(dbl->type) == 6)
+    {
+      for (int i = 0; i < 1000; i++)
+      {
+        if (dbl->addresses[i] < 0)
           break;
         struct data_block *db = get_data_block(map, dbl->addresses[i]);
         db->type = TO_LE32(4);
@@ -295,13 +305,17 @@ static void dealloc_data_block(struct inode *in, uint8_t *map)
         dbl->addresses[i] = TO_LE32(-1);
         incremente_lbl(map);
       }
-    }else{
-      for(int i = 0; i < 1000; i++){
-        if((int32_t)FROM_LE32(dbl->addresses[i]) < 0)
+    }
+    else
+    {
+      for (int i = 0; i < 1000; i++)
+      {
+        if ((int32_t)FROM_LE32(dbl->addresses[i]) < 0)
           break;
         struct address_block *sib = get_address_block(map, dbl->addresses[i]);
-        for(int j = 0; j < 1000; j++){
-          if((int32_t)FROM_LE32(sib->addresses[j]) < 0)
+        for (int j = 0; j < 1000; j++)
+        {
+          if ((int32_t)FROM_LE32(sib->addresses[j]) < 0)
             break;
           struct data_block *db = get_data_block(map, sib->addresses[j]);
           db->type = TO_LE32(4);
@@ -389,17 +403,24 @@ static int create_file(uint8_t *map, const char *filename)
 }
 
 // On récupère le dernier bloc écrit
-static int32_t get_last_data_block(uint8_t *map, struct inode *in) {
-  uint32_t size = FROM_LE32(in->file_size);  
+static int32_t get_last_data_block(uint8_t *map, struct inode *in)
+{
+  uint32_t size = FROM_LE32(in->file_size);
   int32_t last_index = (size - 1) / 4000;
-  if((int32_t)FROM_LE32(in->double_indirect_block) == -1){
+  if ((int32_t)FROM_LE32(in->double_indirect_block) == -1)
+  {
     return (int32_t)FROM_LE32(in->direct_blocks[last_index]);
-  }else{
+  }
+  else
+  {
     last_index -= 900;
     struct address_block *dbl = get_address_block(map, FROM_LE32(in->double_indirect_block));
-    if(FROM_LE32(dbl->type) == 6){
+    if (FROM_LE32(dbl->type) == 6)
+    {
       return FROM_LE32(dbl->addresses[last_index]);
-    }else{
+    }
+    else
+    {
       int outer = last_index / 1000;
       int inner = last_index % 1000;
       struct address_block *sib = get_address_block(map, FROM_LE32(dbl->addresses[outer]));
@@ -409,15 +430,19 @@ static int32_t get_last_data_block(uint8_t *map, struct inode *in) {
 }
 
 // Pour les calculs ont suppose qu'on ait des blocs pleins
-static int32_t get_last_data_block_null(uint8_t *map, struct inode *in) {
+static int32_t get_last_data_block_null(uint8_t *map, struct inode *in)
+{
   uint32_t size = FROM_LE32(in->file_size);
   int32_t last_index = size / 4000;
-  if(last_index == 900 + (1000*1000)){
+  if (last_index == 900 + (1000 * 1000))
+  {
     perror("Erreur: limite de 1000900 blocs de données atteinte");
     return -2;
   }
-  if(in->double_indirect_block == -1){
-    if(last_index >= 900){
+  if (in->double_indirect_block == -1)
+  {
+    if (last_index >= 900)
+    {
       int32_t dbl_blk = alloc_data_block(map);
       in->double_indirect_block = TO_LE32(dbl_blk);
       struct address_block *dbl = get_address_block(map, dbl_blk);
@@ -427,14 +452,18 @@ static int32_t get_last_data_block_null(uint8_t *map, struct inode *in) {
       goto rec1;
     }
     int32_t dbl_blk = alloc_data_block(map);
-    in->direct_blocks[last_index] = TO_LE32(dbl_blk);  
+    in->direct_blocks[last_index] = TO_LE32(dbl_blk);
     return dbl_blk;
-  }else{
-    rec1:
+  }
+  else
+  {
+  rec1:
     last_index -= 900;
     struct address_block *dbl = get_address_block(map, FROM_LE32(in->double_indirect_block));
-    if(FROM_LE32(dbl->type) == 6){
-      if(last_index >= 1000){
+    if (FROM_LE32(dbl->type) == 6)
+    {
+      if (last_index >= 1000)
+      {
         int32_t save = in->double_indirect_block; // Pas besoin de conversion, on garde juste la valeur telle quelle
         int32_t dbl_blk = alloc_data_block(map);
         in->double_indirect_block = TO_LE32(dbl_blk);
@@ -446,16 +475,20 @@ static int32_t get_last_data_block_null(uint8_t *map, struct inode *in) {
         dbl = dbl2;
         goto rec2;
       }
-      if((int32_t)FROM_LE32(dbl->addresses[last_index]) == -1){
+      if ((int32_t)FROM_LE32(dbl->addresses[last_index]) == -1)
+      {
         int32_t dbl_blk = alloc_data_block(map);
         dbl->addresses[last_index] = TO_LE32(dbl_blk);
       }
       return FROM_LE32(dbl->addresses[last_index]);
-    }else{
-      rec2:
+    }
+    else
+    {
+    rec2:
       int outer = last_index / 1000;
       int inner = last_index % 1000;
-      if((int32_t)FROM_LE32(dbl->addresses[outer]) == -1){
+      if ((int32_t)FROM_LE32(dbl->addresses[outer]) == -1)
+      {
         int32_t dbl_blk = alloc_data_block(map);
         dbl->addresses[outer] = TO_LE32(dbl_blk);
         struct address_block *dbl2 = get_address_block(map, dbl_blk);
@@ -465,13 +498,36 @@ static int32_t get_last_data_block_null(uint8_t *map, struct inode *in) {
       }
 
       struct address_block *sib = get_address_block(map, FROM_LE32(dbl->addresses[outer]));
-      if((int32_t)FROM_LE32(sib->addresses[inner]) == -1){
+      if ((int32_t)FROM_LE32(sib->addresses[inner]) == -1)
+      {
         int32_t dbl_blk = alloc_data_block(map);
         sib->addresses[inner] = TO_LE32(dbl_blk);
       }
       return FROM_LE32(sib->addresses[inner]);
     }
   }
+}
+
+// Verrouiller un bloc pour lecture ou écriture
+static int lock_block(int fd, int64_t block_offset, int lock_type)
+{
+  struct flock fl = {0};
+  fl.l_type = lock_type; // F_RDLCK pour lecture, F_WRLCK pour écriture
+  fl.l_whence = SEEK_SET;
+  fl.l_start = block_offset;
+  fl.l_len = 4096; // Taille d'un bloc
+  return fcntl(fd, F_SETLKW, &fl);
+}
+
+// Déverrouiller un bloc
+static int unlock_block(int fd, int64_t block_offset)
+{
+  struct flock fl = {0};
+  fl.l_type = F_UNLCK;
+  fl.l_whence = SEEK_SET;
+  fl.l_start = block_offset;
+  fl.l_len = 4096; // Taille d'un bloc
+  return fcntl(fd, F_SETLK, &fl);
 }
 
 #endif
