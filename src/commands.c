@@ -55,6 +55,11 @@ int cmd_mkfs(const char *fsname, int nbi, int nba)
     return 1;
   }
 
+  for(int32_t i = 0; i < nbb; i++)
+  {
+    calcul_sha1(map + (int64_t)i * 4096, 4000, ((uint8_t *)map + (int64_t)i * 4096) + 4000);
+  }
+
   // 1) Superbloc
   struct pignoufs *sb = (struct pignoufs *)map;
   memset(sb, 0, sizeof(*sb));
@@ -649,7 +654,6 @@ int cmd_input(const char *fsname, const char *filename)
   {
     dealloc_data_block(in, map);
   }
-
   char buf[4000];
   size_t r;
   uint32_t total = FROM_LE32(in->file_size);

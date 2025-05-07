@@ -46,6 +46,13 @@ static void check_sha1(const void *data, size_t len, uint8_t *out)
   if (memcmp(sha1, out, 20) != 0)
   {
     fprintf(stderr, "Erreur: SHA1 ne correspond pas\n");
+    printf("SHA1 attendu : ");
+    for (int i = 0; i < 20; i++)
+      printf("%02x", out[i]);
+    printf("\nSHA1 calculé : ");
+    for (int i = 0; i < 20; i++)
+      printf("%02x", sha1[i]);
+
     exit(EXIT_FAILURE);
   }
 }
@@ -90,7 +97,6 @@ static void get_conteneur_data(uint8_t *map, int32_t *nb1, int32_t *nbi, int32_t
   *nba = FROM_LE32(sb->nb_a);
   *nbb = FROM_LE32(sb->nb_b);
   *nb1 = *nbb - 1 - *nbi - *nba;
-  check_sha1(sb, 4000, sb->sha1);
 }
 
 static void decremente_lbl(uint8_t *map)
@@ -303,11 +309,9 @@ static void dealloc_data_block(struct inode *in, uint8_t *map)
           bitmap_dealloc(map, sib->addresses[j]);
           sib->addresses[j] = TO_LE32(-1);
           incremente_lbl(map);
-          
         }
-        struct address_block *dbl2 = get_address_block(map, dbl->addresses[i]);
-        dbl2->type = TO_LE32(4);
-        calcul_sha1(dbl2->addresses, 4000, dbl2->sha1);
+        sib->type = TO_LE32(4);
+        calcul_sha1(sib->addresses, 4000, sib->sha1);
         bitmap_dealloc(map, dbl->addresses[i]);
         dbl->addresses[i] = TO_LE32(-1);
         incremente_lbl(map);
@@ -381,7 +385,6 @@ static int create_file(uint8_t *map, const char *filename)
   bitmap_alloc(map, inode_blk);
   // Mettre à jour les compteurs du superbloc et son SHA1
   increment_nb_f(map);
-  calcul_sha1(map, 4000, map + 4000);
   return 0;
 }
 
