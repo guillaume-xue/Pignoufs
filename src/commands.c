@@ -594,7 +594,86 @@ int cmd_rm(const char *fsname, const char *filename)
     return 1;
   }
 
+  // Verrouiller l'inode
+  int inode_offset = (1 + nb1) * 4096 + (int64_t)(in - (struct inode *)map);
+  if (lock_block(fd, inode_offset, F_WRLCK) < 0)
+  {
+    print_error("Erreur lors du verrouillage de l'inode");
+    close_fs(fd, map, size);
+    return 1;
+  }
+
+  // Verrouiller les blocs de données associés
+  for (int i = 0; i < 900; i++)
+  {
+    int32_t b = FROM_LE32(in->direct_blocks[i]);
+    if (b < 0)
+      break;
+
+    if (lock_block(fd, b * 4096, F_WRLCK) < 0)
+    {
+      print_error("Erreur lors du verrouillage d'un bloc de données");
+      unlock_block(fd, inode_offset);
+      close_fs(fd, map, size);
+      return 1;
+    }
+    unlock_block(fd, b * 4096);
+  }
+
+  if ((int32_t)FROM_LE32(in->double_indirect_block) >= 0)
+  {
+    struct address_block *dbl = get_address_block(map, FROM_LE32(in->double_indirect_block));
+    if (FROM_LE32(dbl->type) == 6)
+    {
+      for (int i = 0; i < 1000; i++)
+      {
+        int32_t db = FROM_LE32(dbl->addresses[i]);
+        if (db < 0)
+          break;
+
+        if (lock_block(fd, db * 4096, F_WRLCK) < 0)
+        {
+          print_error("Erreur lors du verrouillage d'un bloc de données indirect");
+          unlock_block(fd, inode_offset);
+          close_fs(fd, map, size);
+          return 1;
+        }
+        unlock_block(fd, db * 4096);
+      }
+    }
+    else
+    {
+      for (int i = 0; i < 1000; i++)
+      {
+        int32_t db = FROM_LE32(dbl->addresses[i]);
+        if (db < 0)
+          break;
+
+        struct address_block *sib = get_address_block(map, db);
+        for (int j = 0; j < 1000; j++)
+        {
+          int32_t db2 = FROM_LE32(sib->addresses[j]);
+          if (db2 < 0)
+            break;
+
+          if (lock_block(fd, db2 * 4096, F_WRLCK) < 0)
+          {
+            print_error("Erreur lors du verrouillage d'un bloc de données double indirect");
+            unlock_block(fd, inode_offset);
+            close_fs(fd, map, size);
+            return 1;
+          }
+          unlock_block(fd, db2 * 4096);
+        }
+      }
+    }
+  }
+
+  // Supprimer l'inode
   delete_inode(in, map);
+
+  // Déverrouiller l'inode
+  unlock_block(fd, inode_offset);
 
   close_fs(fd, map, size);
   return 0;
@@ -662,6 +741,17 @@ int cmd_chmod(const char *fsname, const char *filename, const char *arg)
     close_fs(fd, map, size);
     return 1;
   }
+
+  // Verrouiller l'inode
+  int inode_offset = (1 + nb1) * 4096 + (int64_t)(in - (struct inode *)map);
+  if (lock_block(fd, inode_offset, F_WRLCK) < 0)
+  {
+    print_error("Erreur lors du verrouillage de l'inode");
+    close_fs(fd, map, size);
+    return 1;
+  }
+
+  // Modifier les permissions
   if (strcmp(arg, "+r") == 0)
   {
     in->flags |= (1 << 1);
@@ -678,6 +768,18 @@ int cmd_chmod(const char *fsname, const char *filename, const char *arg)
   {
     in->flags &= ~(1 << 2);
   }
+  else
+  {
+    print_error("Argument invalide");
+    unlock_block(fd, inode_offset);
+    close_fs(fd, map, size);
+    return 1;
+  }
+
+  // Déverrouiller l'inode
+  unlock_block(fd, inode_offset);
+
+  close_fs(fd, map, size);
   return 0;
 }
 
@@ -708,16 +810,29 @@ int cmd_cat(const char *fsname, const char *filename)
     int32_t b = FROM_LE32(in->direct_blocks[i]);
     if (b < 0)
       break;
+
+    // Verrouiller le bloc source
+    if (lock_block(fd, b * 4096, F_RDLCK) < 0)
+    {
+      print_error("Erreur lors du verrouillage du bloc source");
+      close_fs(fd, map, size);
+      return 1;
+    }
+
     struct data_block *data_position = get_data_block(map, b);
     uint32_t buffer = remaining_data < 4000 ? remaining_data : 4000;
     int written = write(STDOUT_FILENO, data_position->data, buffer);
     if (written == -1)
     {
       print_error("write: erreur d'écriture");
+      unlock_block(fd, b * 4096);
       close_fs(fd, map, size);
       return 1;
     }
     remaining_data -= buffer;
+
+    // Déverrouiller le bloc source
+    unlock_block(fd, b * 4096);
   }
 
   if (remaining_data == 0)
@@ -739,16 +854,27 @@ int cmd_cat(const char *fsname, const char *filename)
       int32_t db = FROM_LE32(dbl->addresses[i]);
       if (db < 0)
         break;
+
+      // Verrouiller le bloc source
+      if (lock_block(fd, db * 4096, F_RDLCK) < 0)
+      {
+        print_error("Erreur lors du verrouillage du bloc source");
+        close_fs(fd, map, size);
+        return 1;
+      }
+
       struct data_block *data_position2 = get_data_block(map, db);
       uint32_t buffer = remaining_data < 4000 ? remaining_data : 4000;
       int written = write(STDOUT_FILENO, data_position2->data, buffer);
       if (written == -1)
       {
         print_error("write: erreur d'écriture");
+        unlock_block(fd, db * 4096);
         close_fs(fd, map, size);
         return 1;
       }
       remaining_data -= buffer;
+      unlock_block(fd, db * 4096);
     }
     goto end;
   }
@@ -765,16 +891,27 @@ int cmd_cat(const char *fsname, const char *filename)
         int32_t db2 = FROM_LE32(ab2->addresses[j]);
         if (db2 < 0)
           break;
+
+        // Verrouiller le bloc source
+        if (lock_block(fd, db2 * 4096, F_RDLCK) < 0)
+        {
+          print_error("Erreur lors du verrouillage du bloc source");
+          close_fs(fd, map, size);
+          return 1;
+        }
+
         struct data_block *data_position3 = get_data_block(map, db2);
         uint32_t buffer = remaining_data < 4000 ? remaining_data : 4000;
         int written = write(STDOUT_FILENO, data_position3->data, buffer);
         if (written == -1)
         {
           print_error("write: erreur d'écriture");
+          unlock_block(fd, db2 * 4096);
           close_fs(fd, map, size);
           return 1;
         }
         remaining_data -= buffer;
+        unlock_block(fd, db2 * 4096);
       }
     }
   }
@@ -912,22 +1049,47 @@ int cmd_add(const char *fsname, const char *filename_ext, const char *filename_i
     }
     in = find_inode(map, nb1, nbi, filename_int);
   }
+
+  // Verrouiller l'inode
+  int inode_offset = (1 + nb1) * 4096 + (int64_t)(in - (struct inode *)map);
+  if (lock_block(fd, inode_offset, F_WRLCK) < 0)
+  {
+    print_error("Erreur lors du verrouillage de l'inode");
+    close_fs(fd, map, size);
+    return 1;
+  }
+
   uint32_t total = FROM_LE32(in->file_size);
   uint32_t offset = (total % 4000);
   char buf[4000];
   size_t r;
+
   if (offset > 0)
   {
     int32_t last = get_last_data_block(map, in);
+
+    // Verrouiller le dernier bloc de données
+    if (lock_block(fd, last * 4096, F_WRLCK) < 0)
+    {
+      print_error("Erreur lors du verrouillage du dernier bloc de données");
+      unlock_block(fd, inode_offset);
+      close_fs(fd, map, size);
+      return 1;
+    }
+
     r = read(inf, buf, 4000 - offset);
     if ((int32_t)r == -1)
     {
       print_error("read source: erreur de lecture du fichier externe");
+      unlock_block(fd, last * 4096);
+      unlock_block(fd, inode_offset);
       close_fs(fd, map, size);
       return 1;
     }
     if (r == 0)
     {
+      unlock_block(fd, last * 4096);
+      unlock_block(fd, inode_offset);
       close_fs(fd, map, size);
       return 0;
     }
@@ -936,6 +1098,9 @@ int cmd_add(const char *fsname, const char *filename_ext, const char *filename_i
     calcul_sha1(db->data, 4000, db->sha1);
     total += r;
     in->file_size = TO_LE32(total);
+
+    // Déverrouiller le dernier bloc de données
+    unlock_block(fd, last * 4096);
   }
 
   while ((r = read(inf, buf, 4000)) > 0)
@@ -947,6 +1112,16 @@ int cmd_add(const char *fsname, const char *filename_ext, const char *filename_i
       print_error("Erreur: pas de blocs de données libres disponibles");
       break;
     }
+
+    // Verrouiller le nouveau bloc de données
+    if (lock_block(fd, b * 4096, F_WRLCK) < 0)
+    {
+      print_error("Erreur lors du verrouillage du bloc de données");
+      unlock_block(fd, inode_offset);
+      close_fs(fd, map, size);
+      return 1;
+    }
+
     struct data_block *db = get_data_block(map, b);
     memset(db->data, 0, sizeof(db->data));
     memcpy(db->data, buf, r);
@@ -954,6 +1129,9 @@ int cmd_add(const char *fsname, const char *filename_ext, const char *filename_i
     db->type = TO_LE32(5);
     total += r;
     in->file_size = TO_LE32(total);
+
+    // Déverrouiller le nouveau bloc de données
+    unlock_block(fd, b * 4096);
   }
 
   // recalculer le SHA1 de des blocs d'adressage
@@ -981,6 +1159,10 @@ int cmd_add(const char *fsname, const char *filename_ext, const char *filename_i
   in->file_size = TO_LE32(total);
   in->modification_time = TO_LE32(time(NULL));
   calcul_sha1(in, 4000, in->sha1);
+
+  // Déverrouiller l'inode
+  unlock_block(fd, inode_offset);
+
   close_fs(fd, map, size);
   close(inf);
 
@@ -1007,20 +1189,44 @@ int cmd_addinput(const char *fsname, const char *filename)
     }
     in = find_inode(map, nb1, nbi, filename);
   }
+
+  // Verrouiller l'inode
+  int inode_offset = (1 + nb1) * 4096 + (int64_t)(in - (struct inode *)map);
+  if (lock_block(fd, inode_offset, F_WRLCK) < 0)
+  {
+    print_error("Erreur lors du verrouillage de l'inode");
+    close_fs(fd, map, size);
+    return 1;
+  }
+
   uint32_t total = FROM_LE32(in->file_size);
   char buf[4000];
   size_t r;
+
   while ((r = read(STDIN_FILENO, buf, 4000)) > 0)
   {
     uint32_t offset = (total % 4000);
     if (offset > 0)
     {
       int32_t last = get_last_data_block(map, in);
+
+      // Verrouiller le dernier bloc de données
+      if (lock_block(fd, last * 4096, F_WRLCK) < 0)
+      {
+        print_error("Erreur lors du verrouillage du dernier bloc de données");
+        unlock_block(fd, inode_offset);
+        close_fs(fd, map, size);
+        return 1;
+      }
+
       struct data_block *db = get_data_block(map, last);
       memcpy(db->data + offset, buf, r);
       calcul_sha1(db->data, 4000, db->sha1);
       total += r;
       in->file_size = TO_LE32(total);
+
+      // Déverrouiller le dernier bloc de données
+      unlock_block(fd, last * 4096);
     }
     else
     {
@@ -1030,6 +1236,16 @@ int cmd_addinput(const char *fsname, const char *filename)
         print_error("Erreur: pas de blocs de données libres disponibles");
         break;
       }
+
+      // Verrouiller le nouveau bloc de données
+      if (lock_block(fd, b * 4096, F_WRLCK) < 0)
+      {
+        print_error("Erreur lors du verrouillage du bloc de données");
+        unlock_block(fd, inode_offset);
+        close_fs(fd, map, size);
+        return 1;
+      }
+
       struct data_block *db = get_data_block(map, b);
       memset(db->data, 0, sizeof(db->data));
       memcpy(db->data, buf, r);
@@ -1037,6 +1253,9 @@ int cmd_addinput(const char *fsname, const char *filename)
       db->type = TO_LE32(5);
       total += r;
       in->file_size = TO_LE32(total);
+
+      // Déverrouiller le nouveau bloc de données
+      unlock_block(fd, b * 4096);
     }
   }
   // recalculer le SHA1 de des blocs d'adressage
@@ -1060,9 +1279,14 @@ int cmd_addinput(const char *fsname, const char *filename)
       calcul_sha1(dbl->addresses, 4000, dbl->sha1);
     }
   }
+
   in->file_size = TO_LE32(total);
   in->modification_time = TO_LE32(time(NULL));
   calcul_sha1(in, 4000, in->sha1);
+
+  // Déverrouiller l'inode
+  unlock_block(fd, inode_offset);
+
   close_fs(fd, map, size);
   return 0;
 }
