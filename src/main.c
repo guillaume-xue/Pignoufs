@@ -277,6 +277,17 @@ int main(int argc, char *argv[])
     }
     return cmd_find(fsname, type, name, days, date_type);
   }
+  else if (strcmp(command, "grep") == 0)
+  {
+    if (argc < 3)
+    {
+      fprintf(stderr, "Erreur : la commande 'grep' nécessite un motif.\n");
+      return 1;
+    }
+
+    const char *pattern = argv[2];
+    return cmd_grep(fsname, pattern);
+  }
   else
   {
     fprintf(stderr, "Erreur : commande inconnue '%s'\n", command);

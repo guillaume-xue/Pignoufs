@@ -40,6 +40,7 @@ links: $(BIN_DIR)/pignoufs
 	ln -sf $(BIN_DIR)/pignoufs fsck
 	ln -sf $(BIN_DIR)/pignoufs find
 	ln -sf $(BIN_DIR)/pignoufs mount
+	ln -sf $(BIN_DIR)/pignoufs grep
 
 $(BIN_DIR)/%.o: $(SRC_DIR)/%.c | $(BIN_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@

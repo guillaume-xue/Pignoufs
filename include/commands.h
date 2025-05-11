@@ -15,5 +15,6 @@ int cmd_addinput(const char *fsname, const char *filename);
 int cmd_fsck(const char *fsname);
 int cmd_mount(int argc, char *argv[]);
 int cmd_find(const char *fsname, const char *type, const char *name, int days, const char *date_type);
+int cmd_grep(const char *fsname, const char *pattern);
 
 #endif
