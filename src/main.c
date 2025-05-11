@@ -143,11 +143,14 @@ int main(int argc, char *argv[])
       fprintf(stderr, "Erreur: Le nom de fichier interne doit commencer par \"//\".\n");
       return 1;
     }
-    filename += 2; 
+    filename += 2;
     const char *arg = argv[3];
-    if(strcmp(arg, "r") == 0 || strcmp(arg, "w") == 0){
+    if (strcmp(arg, "r") == 0 || strcmp(arg, "w") == 0)
+    {
       return cmd_lock(fsname, filename, arg);
-    }else{
+    }
+    else
+    {
       fprintf(stderr, "Erreur: L'argument de lock doit être 'r' ou 'w'.\n");
       return 1;
     }
@@ -167,10 +170,12 @@ int main(int argc, char *argv[])
     }
     filename += 2;
     const char *arg = argv[3];
-    if(strcmp(arg, "+r") == 0 || strcmp(arg, "-r") == 0 || strcmp(arg, "+w") == 0 || strcmp(arg, "-w") == 0)
+    if (strcmp(arg, "+r") == 0 || strcmp(arg, "-r") == 0 || strcmp(arg, "+w") == 0 || strcmp(arg, "-w") == 0)
     {
       return cmd_chmod(fsname, filename, arg);
-    }else{
+    }
+    else
+    {
       fprintf(stderr, "Erreur: L'argument de chmod doit être +r, -r, +w ou -w.\n");
       return 1;
     }
@@ -251,6 +256,26 @@ int main(int argc, char *argv[])
   else if (strcmp(command, "mount") == 0)
   {
     return cmd_mount(argc, argv);
+  }
+  else if (strcmp(command, "find") == 0)
+  {
+    const char *type = NULL, *name = NULL, *date_type = NULL;
+    int days = 0;
+
+    for (int i = 2; i < argc; i++)
+    {
+      if (strcmp(argv[i], "-type") == 0 && i + 1 < argc)
+        type = argv[++i];
+      else if (strcmp(argv[i], "-name") == 0 && i + 1 < argc)
+        name = argv[++i];
+      else if (strcmp(argv[i], "-ctime") == 0 && i + 1 < argc)
+        date_type = "ctime", days = atoi(argv[++i]);
+      else if (strcmp(argv[i], "-mtime") == 0 && i + 1 < argc)
+        date_type = "mtime", days = atoi(argv[++i]);
+      else if (strcmp(argv[i], "-atime") == 0 && i + 1 < argc)
+        date_type = "atime", days = atoi(argv[++i]);
+    }
+    return cmd_find(fsname, type, name, days, date_type);
   }
   else
   {

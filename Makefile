@@ -38,6 +38,7 @@ links: $(BIN_DIR)/pignoufs
 	ln -sf $(BIN_DIR)/pignoufs add
 	ln -sf $(BIN_DIR)/pignoufs addinput
 	ln -sf $(BIN_DIR)/pignoufs fsck
+	ln -sf $(BIN_DIR)/pignoufs find
 	ln -sf $(BIN_DIR)/pignoufs mount
 
 $(BIN_DIR)/%.o: $(SRC_DIR)/%.c | $(BIN_DIR)

@@ -1,7 +1,6 @@
 #ifndef COMMANDS_H
 #define COMMANDS_H
 
-
 int cmd_mkfs(const char *fsname, int nbi, int nba);
 int cmd_ls(const char *fsname, const char *filename);
 int cmd_df(const char *fsname);
@@ -15,5 +14,6 @@ int cmd_add(const char *fsname, const char *filename_ext, const char *filename_i
 int cmd_addinput(const char *fsname, const char *filename);
 int cmd_fsck(const char *fsname);
 int cmd_mount(int argc, char *argv[]);
+int cmd_find(const char *fsname, const char *type, const char *name, int days, const char *date_type);
 
 #endif
