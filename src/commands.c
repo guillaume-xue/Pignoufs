@@ -122,6 +122,76 @@ int cmd_mkfs(const char *fsname, int nbi, int nba)
   return 0;
 }
 
+// Fonction récursive pour afficher l'arborescence
+void print_tree(uint8_t *map, int32_t nb1, int32_t nbi, struct inode *inode, int depth, bool *visited_inodes)
+{
+  // Vérifier si l'inode a déjà été visité pour éviter les boucles infinies
+  int inode_index = inode - get_inode(map, 1 + nb1, 0);
+  if (visited_inodes[inode_index])
+    return;
+  visited_inodes[inode_index] = true;
+
+  // Afficher l'indentation en fonction de la profondeur
+  for (int i = 0; i < depth; i++)
+    printf("  ");
+
+  // Afficher le nom du fichier ou répertoire
+  printf("%s%s\n", inode->filename, (FROM_LE32(inode->flags) & (1 << 5)) ? "/" : "");
+
+  // Si ce n'est pas un répertoire, arrêter
+  if (!(FROM_LE32(inode->flags) & (1 << 5)))
+    return;
+
+  // Parcourir les direct_blocks pour trouver les sous-dossiers et fichiers
+  for (int i = 0; i < 900; i++)
+  {
+    int32_t block_idx = FROM_LE32(inode->direct_blocks[i]);
+    if (block_idx == -1)
+      break;
+
+    struct inode *child_inode = get_inode(map, 1 + nb1, block_idx);
+
+    // Appel récursif pour afficher les sous-dossiers et fichiers
+    print_tree(map, nb1, nbi, child_inode, depth + 1, visited_inodes);
+  }
+}
+
+// Commande tree
+int cmd_tree(const char *fsname, const char *path)
+{
+  uint8_t *map;
+  size_t size;
+  int fd = open_fs(fsname, &map, &size);
+  if (fd < 0)
+    return print_error("Erreur lors de l'ouverture du système de fichiers");
+
+  int32_t nb1, nbi, nba, nbb;
+  get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
+
+  // Trouver l'inode de départ (racine ou répertoire spécifié)
+  struct inode *root_inode = find_inode(map, nb1, nbi, path ? path : ".");
+  if (!root_inode || !(FROM_LE32(root_inode->flags) & 1))
+  {
+    close_fs(fd, map, size);
+    return print_error("Répertoire ou fichier introuvable");
+  }
+
+  // Tableau pour suivre les inodes visités
+  bool *visited_inodes = calloc(nbi, sizeof(bool));
+  if (!visited_inodes)
+  {
+    close_fs(fd, map, size);
+    return print_error("Erreur d'allocation mémoire");
+  }
+
+  // Afficher l'arborescence à partir de l'inode racine
+  print_tree(map, nb1, nbi, root_inode, 0, visited_inodes);
+
+  free(visited_inodes);
+  close_fs(fd, map, size);
+  return 0;
+}
+
 int cmd_ls(const char *fsname, const char *filename)
 {
   uint8_t *map;
@@ -1590,28 +1660,62 @@ int cmd_mkdir(const char *fsname, const char *path)
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
 
+  // Vérifier si le répertoire courant (".") existe
+  struct inode *current_inode = find_inode(map, nb1, nbi, ".");
+  if (!current_inode)
+  {
+    // Créer le répertoire courant
+    int32_t free_inode_idx = -1;
+    for (int i = 0; i < nbi; i++)
+    {
+      struct inode *in = get_inode(map, 1 + nb1, i);
+      if (!(FROM_LE32(in->flags) & 1)) // Trouver un inode libre
+      {
+        free_inode_idx = i;
+        break;
+      }
+    }
+    if (free_inode_idx < 0)
+    {
+      close_fs(fd, map, size);
+      return print_error("Aucun inode libre disponible pour le répertoire courant.");
+    }
+
+    struct inode *new_inode = get_inode(map, 1 + nb1, free_inode_idx);
+    init_inode(new_inode, ".", true); // Initialiser comme répertoire
+    bitmap_alloc(map, 1 + nb1 + free_inode_idx);
+    increment_nb_f(map);
+
+    // Marquer le répertoire courant comme créé
+    current_inode = new_inode;
+  }
+
   // Vérifier si le répertoire parent existe
   char parent_path[256], dir_name[256];
   split_path(path, parent_path, dir_name); // Séparer le chemin parent et le nom du répertoire
 
-  struct inode *parent_inode = NULL;
-  if (strlen(parent_path) == 0)
+  struct inode *parent_inode = find_inode(map, nb1, nbi, ".");
+  if (!parent_inode || !(FROM_LE32(parent_inode->flags) & (1 << 5)))
   {
-    parent_inode = find_inode(map, nb1, nbi, ".");
-    if (!parent_inode || !(FROM_LE32(parent_inode->flags) & (1 << 5)))
-    {
-      close_fs(fd, map, size);
-      return print_error("Répertoire courant introuvable ou non valide");
-    }
+    close_fs(fd, map, size);
+    return print_error("Répertoire courant introuvable ou non valide");
   }
-  else
+
+  char *token;
+  char temp_path[256];
+  strncpy(temp_path, parent_path, sizeof(temp_path) - 1);
+  temp_path[sizeof(temp_path) - 1] = '\0';
+
+  token = strtok(temp_path, "/");
+  while (token != NULL)
   {
-    parent_inode = find_inode(map, nb1, nbi, parent_path);
+    parent_inode = find_inode(map, nb1, nbi, token);
     if (!parent_inode || !(FROM_LE32(parent_inode->flags) & (1 << 5)))
     {
       close_fs(fd, map, size);
-      return print_error("Répertoire parent introuvable ou non valide");
+      return print_error("Un des répertoires parents est introuvable ou non valide");
     }
+    token = strtok(NULL, "/");
   }
 
   // Vérifier si le répertoire existe déjà
@@ -1645,6 +1749,24 @@ int cmd_mkdir(const char *fsname, const char *path)
   new_inode->filename[sizeof(new_inode->filename) - 1] = '\0';             // S'assurer que le nom est terminé
   bitmap_alloc(map, 1 + nb1 + free_inode_idx);
   increment_nb_f(map);
+
+  // Ajouter une référence vers l'inode du sous-dossier dans les direct_blocks du parent
+  bool added = false;
+  for (int i = 0; i < 900; i++)
+  {
+    if (parent_inode->direct_blocks[i] == -1)
+    {
+      parent_inode->direct_blocks[i] = TO_LE32(free_inode_idx); // Stocker l'index de l'inode du sous-dossier
+      added = true;
+      break;
+    }
+  }
+
+  if (!added)
+  {
+    close_fs(fd, map, size);
+    return print_error("Erreur: Pas d'espace disponible dans les direct_blocks du répertoire parent");
+  }
 
   // Mettre à jour le répertoire parent
   parent_inode->modification_time = TO_LE32(time(NULL));

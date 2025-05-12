@@ -83,6 +83,21 @@ int main(int argc, char *argv[])
     }
     return cmd_ls(fsname, filename);
   }
+  else if (strcmp(command, "tree") == 0)
+  {
+    const char *filename = NULL;
+    if (argc > 2)
+    {
+      filename = argv[2];
+      if (strncmp(filename, "//", 2) != 0)
+      {
+        fprintf(stderr, "Erreur: Le nom de fichier interne doit commencer par \"//\".\n");
+        return 1;
+      }
+      filename += 2; // Ignorer les deux premiers caractères
+    }
+    return cmd_tree(fsname, filename);
+  }
   else if (strcmp(command, "df") == 0)
   {
     return cmd_df(fsname);
