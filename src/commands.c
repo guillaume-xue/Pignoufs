@@ -258,6 +258,7 @@ int cmd_cp(const char *fsname, const char *filename1, const char *filename2, boo
       in2->direct_blocks[i] = TO_LE32(new_block);
       in2->file_size = TO_LE32(FROM_LE32(in2->file_size) + 4000);
       in2->modification_time = TO_LE32(time(NULL));
+      calcul_sha1(new_data_position->data, 4000, new_data_position->sha1);
 
       // Déverrouiller les blocs
       unlock_block(fd, b * 4096);
@@ -299,6 +300,7 @@ int cmd_cp(const char *fsname, const char *filename1, const char *filename2, boo
           in2->direct_blocks[i] = TO_LE32(new_block);
           in2->file_size = TO_LE32(FROM_LE32(in2->file_size) + 4000);
           in2->modification_time = TO_LE32(time(NULL));
+          calcul_sha1(new_data_position2->data, 4000, new_data_position2->sha1);
 
           // Déverrouiller les blocs
           unlock_block(fd, db * 4096);
@@ -355,6 +357,7 @@ int cmd_cp(const char *fsname, const char *filename1, const char *filename2, boo
             in2->direct_blocks[i] = TO_LE32(new_block);
             in2->file_size = TO_LE32(FROM_LE32(in2->file_size) + 4000);
             in2->modification_time = TO_LE32(time(NULL));
+            calcul_sha1(new_data_position3->data, 4000, new_data_position3->sha1);
 
             // Déverrouiller les blocs
             unlock_block(fd, db2 * 4096);
@@ -366,6 +369,7 @@ int cmd_cp(const char *fsname, const char *filename1, const char *filename2, boo
         }
       }
     }
+    calcul_sha1(in2, 4000, in2->sha1);
   }
   else if (mode1 && !mode2) // Si le premier fichier est interne et le second externe
   {
@@ -1315,7 +1319,7 @@ int cmd_fsck(const char *fsname)
     close_fs(fd, map, size);
     return 1;
   }
-
+  
   for (int32_t i = 1; i < nbb; i++)
   {
     struct bitmap_block *bb = (struct bitmap_block *)((uint8_t *)map + (int64_t)(i) * 4096);
@@ -1357,7 +1361,7 @@ int cmd_fsck(const char *fsname)
             return 1;
           }
         }
-        if ((int32_t)FROM_LE32(in->double_indirect_block) < 0)
+        if ((int32_t)FROM_LE32(in->double_indirect_block) >= 0)
         {
           struct address_block *dbl = get_address_block(map, FROM_LE32(in->double_indirect_block));
           if (FROM_LE32(dbl->type) == 6)
