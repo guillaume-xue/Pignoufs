@@ -530,4 +530,24 @@ static int unlock_block(int fd, int64_t block_offset)
   return fcntl(fd, F_SETLK, &fl);
 }
 
+static void split_path(const char *path, char *parent_path, char *dir_name)
+{
+  const char *last_slash = strrchr(path, '/');
+  if (last_slash)
+  {
+    size_t parent_len = last_slash - path;
+    strncpy(parent_path, path, parent_len);
+    parent_path[parent_len] = '\0';
+    strncpy(dir_name, last_slash + 1, 255);
+    dir_name[255] = '\0';
+  }
+  else
+  {
+    // Pas de slash dans le chemin, le répertoire parent est vide
+    parent_path[0] = '\0';
+    strncpy(dir_name, path, 255);
+    dir_name[255] = '\0';
+  }
+}
+
 #endif

@@ -17,18 +17,17 @@
 #include <stdbool.h>
 #include <signal.h>
 
-
 struct pignoufs
 {
-  char magic[8];   // Magic number : "pignoufs"
-  int32_t nb_b;    // Nombre total de blocs (little-endian)
-  int32_t nb_i;    // Nombre d'inodes (little-endian)
-  int32_t nb_a;    // Nombre de blocs allouables (little-endian)
-  int32_t nb_l;    // Nombre de blocs allouables libres (little-endian)
-  int32_t nb_f;    // Nombre de fichiers stockés = inodes alloués (little-endian)
-  char zero[3972]; // Padding pour atteindre 4000 octets
+  char magic[8];    // Magic number : "pignoufs"
+  int32_t nb_b;     // Nombre total de blocs (little-endian)
+  int32_t nb_i;     // Nombre d'inodes (little-endian)
+  int32_t nb_a;     // Nombre de blocs allouables (little-endian)
+  int32_t nb_l;     // Nombre de blocs allouables libres (little-endian)
+  int32_t nb_f;     // Nombre de fichiers stockés = inodes alloués (little-endian)
+  char zero[3972];  // Padding pour atteindre 4000 octets
   uint8_t sha1[20]; // SHA1 du contenu
-  uint32_t type;   // Type du bloc (1 pour superbloc, little-endian)
+  uint32_t type;    // Type du bloc (1 pour superbloc, little-endian)
   char padding[72]; // Padding pour atteindre 4096 octets
 };
 
@@ -72,8 +71,14 @@ struct address_block
   char padding[72];        // Padding
 };
 
+struct directory_entry
+{
+  int32_t inode_number; // Numéro d'inode
+  char name[256];       // Nom de l'entrée (fichier ou répertoire)
+};
+
 // Macros pour conversion endian
-#define TO_LE32(x)   htole32(x)
+#define TO_LE32(x) htole32(x)
 #define FROM_LE32(x) le32toh(x)
 
 #endif
