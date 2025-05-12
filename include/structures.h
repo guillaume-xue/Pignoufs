@@ -71,12 +71,6 @@ struct address_block
   char padding[72];        // Padding
 };
 
-struct directory_entry
-{
-  int32_t inode_number; // Numéro d'inode
-  char name[256];       // Nom de l'entrée (fichier ou répertoire)
-};
-
 // Macros pour conversion endian
 #define TO_LE32(x) htole32(x)
 #define FROM_LE32(x) le32toh(x)

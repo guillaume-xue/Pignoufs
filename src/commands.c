@@ -1586,63 +1586,139 @@ int cmd_mkdir(const char *fsname, const char *path)
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
 
+  // Vérifier si le répertoire courant (".") existe
+  struct inode *current_inode = find_inode(map, nb1, nbi, ".");
+  if (!current_inode)
+  {
+    // Créer le répertoire courant
+    int32_t free_inode_idx = -1;
+    for (int i = 0; i < nbi; i++)
+    {
+      struct inode *in = get_inode(map, 1 + nb1, i);
+      if (!(FROM_LE32(in->flags) & 1)) // Trouver un inode libre
+      {
+        free_inode_idx = i;
+        break;
+      }
+    }
+    if (free_inode_idx < 0)
+    {
+      close_fs(fd, map, size);
+      return print_error("Aucun inode libre disponible pour le répertoire courant.");
+    }
+
+    struct inode *new_inode = get_inode(map, 1 + nb1, free_inode_idx);
+    init_inode(new_inode, ".", true); // Initialiser comme répertoire
+    bitmap_alloc(map, 1 + nb1 + free_inode_idx);
+    increment_nb_f(map);
+
+    // Marquer le répertoire courant comme créé
+    current_inode = new_inode;
+  }
+
   // Vérifier si le répertoire parent existe
   char parent_path[256], dir_name[256];
   split_path(path, parent_path, dir_name); // Fonction pour séparer le chemin parent et le nom du répertoire
 
   struct inode *parent_inode = NULL;
-  if (strlen(parent_path) > 0)
+  if (strlen(parent_path) == 0)
   {
+    parent_inode = find_inode(map, nb1, nbi, ".");
+    if (!parent_inode || !(FROM_LE32(parent_inode->flags) & (1 << 5)))
+    {
+      close_fs(fd, map, size);
+      return print_error("Répertoire courant introuvable ou non valide");
+    }
+  }
+  else
+  {
+    // Trouver l'inode du répertoire parent
     parent_inode = find_inode(map, nb1, nbi, parent_path);
     if (!parent_inode || !(FROM_LE32(parent_inode->flags) & (1 << 5)))
     {
-      // Si le parent n'existe pas, essayer de le créer
       close_fs(fd, map, size);
-      if (cmd_mkdir(fsname, parent_path) != 0)
-      {
-        return print_error("Impossible de créer le répertoire parent");
-      }
-      // Réouvrir le système de fichiers après la création du parent
-      fd = open_fs(fsname, &map, &size);
-      if (fd < 0)
-        return print_error("Erreur lors de la réouverture du système de fichiers");
-      get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
-      parent_inode = find_inode(map, nb1, nbi, parent_path);
-      if (!parent_inode || !(FROM_LE32(parent_inode->flags) & (1 << 5)))
-      {
-        close_fs(fd, map, size);
-        return print_error("Répertoire parent introuvable après création");
-      }
+      return print_error("Répertoire parent introuvable ou non valide");
     }
   }
 
   // Vérifier si le répertoire existe déjà
-  if (find_inode(map, nb1, nbi, path))
+  struct inode *exist_inode = find_inode(map, nb1, nbi, path);
+  if (exist_inode)
   {
     close_fs(fd, map, size);
-    return print_error("Répertoire déjà existant");
+    return print_error("Le répertoire existe déjà");
   }
 
-  // Créer une nouvelle inode pour le répertoire
-  int status = create_file(map, path);
-  if (status == -1)
+  // Allouer un nouvel inode pour le répertoire
+  int32_t free_inode_idx = -1;
+  for (int i = 0; i < nbi; i++)
+  {
+    struct inode *in = get_inode(map, 1 + nb1, i);
+    if (!(FROM_LE32(in->flags) & 1)) // Trouver un inode libre
+    {
+      free_inode_idx = i;
+      break;
+    }
+  }
+  if (free_inode_idx < 0)
   {
     close_fs(fd, map, size);
-    return print_error("Erreur lors de la création du répertoire");
+    return print_error("Aucun inode libre disponible");
   }
 
-  struct inode *new_inode = find_inode(map, nb1, nbi, path);
-  new_inode->flags |= (1 << 5); // Marquer comme répertoire
-  calcul_sha1(new_inode, 4000, new_inode->sha1);
+  struct inode *new_inode = get_inode(map, 1 + nb1, free_inode_idx);
+  init_inode(new_inode, dir_name, true); // Initialiser comme répertoire
+  bitmap_alloc(map, 1 + nb1 + free_inode_idx);
+  increment_nb_f(map);
 
-  // Ajouter les entrées "." et ".." dans le répertoire
-  struct data_block *db = get_data_block(map, alloc_data_block(map));
-  struct directory_entry *entries = (struct directory_entry *)db->data;
-  entries[0].inode_number = find_node_pos(map, path);
-  strncpy(entries[0].name, ".", sizeof(entries[0].name));
-  entries[1].inode_number = (parent_inode) ? find_node_pos(map, parent_path) : -1; // -1 si pas de parent
-  strncpy(entries[1].name, "..", sizeof(entries[1].name));
-  calcul_sha1(db->data, 4000, db->sha1);
+  // Ajouter une entrée dans le répertoire parent
+  bool added = false;
+  for (int i = 0; i < 900; i++)
+  {
+    int32_t block_idx = FROM_LE32(parent_inode->direct_blocks[i]);
+    if (block_idx == -1)
+    {
+      // Allouer un nouveau bloc de données pour le parent
+      block_idx = alloc_data_block(map);
+      if (block_idx < 0)
+      {
+        close_fs(fd, map, size);
+        return print_error("Erreur lors de l'allocation d'un bloc de données");
+      }
+      parent_inode->direct_blocks[i] = TO_LE32(block_idx);
+    }
+
+    struct data_block *block = get_data_block(map, block_idx);
+    char *data = block->data;
+
+    // Parcourir le bloc pour trouver un espace libre
+    for (int j = 0; j < 4000; j += 260) // 256 (nom) + 4 (numéro d'inode)
+    {
+      if (data[j] == '\0') // Trouver une entrée vide
+      {
+        strncpy(&data[j], dir_name, 255);
+        data[j + 255] = '\0'; // S'assurer que le nom est terminé
+        *(int32_t *)&data[j + 256] = TO_LE32(1 + nb1 + free_inode_idx);
+        added = true;
+        break;
+      }
+    }
+
+    if (added)
+    {
+      calcul_sha1(block->data, 4000, block->sha1);
+      break;
+    }
+  }
+
+  if (!added)
+  {
+    close_fs(fd, map, size);
+    return print_error("Erreur: Pas d'espace disponible dans le répertoire parent");
+  }
+
+  parent_inode->modification_time = TO_LE32(time(NULL));
+  calcul_sha1(parent_inode, 4000, parent_inode->sha1);
 
   close_fs(fd, map, size);
   return 0;
