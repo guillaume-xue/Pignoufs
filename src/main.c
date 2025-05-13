@@ -319,6 +319,22 @@ int main(int argc, char *argv[])
     path += 2; // Ignorer les deux premiers caractères
     return cmd_mkdir(fsname, path);
   }
+  else if (strcmp(command, "rmdir") == 0)
+  {
+    if (argc < 3)
+    {
+      fprintf(stderr, "Erreur : la commande 'rmdir' nécessite au moins 2 arguments.\n");
+      return 1;
+    }
+    const char *path = argv[2];
+    if (strncmp(path, "//", 2) != 0)
+    {
+      fprintf(stderr, "Erreur: Le nom de fichier interne doit commencer par \"//\".\n");
+      return 1;
+    }
+    path += 2; // Ignorer les deux premiers caractères
+    return cmd_rmdir(fsname, path);
+  }
   else
   {
     fprintf(stderr, "Erreur : commande inconnue '%s'\n", command);

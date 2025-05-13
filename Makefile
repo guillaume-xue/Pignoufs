@@ -41,6 +41,9 @@ links: $(BIN_DIR)/pignoufs
 	ln -sf $(BIN_DIR)/pignoufs find
 	ln -sf $(BIN_DIR)/pignoufs mount
 	ln -sf $(BIN_DIR)/pignoufs grep
+	ln -sf $(BIN_DIR)/pignoufs mkdir
+	ln -sf $(BIN_DIR)/pignoufs rmdir
+	ln -sf $(BIN_DIR)/pignoufs tree
 
 $(BIN_DIR)/%.o: $(SRC_DIR)/%.c | $(BIN_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@

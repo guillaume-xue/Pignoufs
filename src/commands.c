@@ -1389,7 +1389,7 @@ int cmd_fsck(const char *fsname)
     close_fs(fd, map, size);
     return 1;
   }
-  
+
   for (int32_t i = 1; i < nbb; i++)
   {
     struct bitmap_block *bb = (struct bitmap_block *)((uint8_t *)map + (int64_t)(i) * 4096);
