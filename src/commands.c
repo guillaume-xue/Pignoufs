@@ -1775,3 +1775,70 @@ int cmd_mkdir(const char *fsname, const char *path)
   close_fs(fd, map, size);
   return 0;
 }
+
+int cmd_rmdir(const char *fsname, const char *path)
+{
+  if (path == NULL || strlen(path) == 0)
+  {
+    return print_error("Erreur: Le chemin spécifié est vide.");
+  }
+
+  uint8_t *map;
+  size_t size;
+  int fd = open_fs(fsname, &map, &size);
+  if (fd < 0)
+    return print_error("Erreur lors de l'ouverture du système de fichiers");
+
+  int32_t nb1, nbi, nba, nbb;
+  get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
+
+  // Séparer le chemin parent et le nom du répertoire
+  char parent_path[256], dir_name[256];
+  split_path(path, parent_path, dir_name);
+
+  // Trouver l'inode du répertoire parent
+  struct inode *parent_inode = find_inode(map, nb1, nbi, parent_path);
+  if (!parent_inode || !(FROM_LE32(parent_inode->flags) & (1 << 5)))
+  {
+    close_fs(fd, map, size);
+    return print_error("Répertoire parent introuvable ou non valide.");
+  }
+
+  // Trouver l'inode du répertoire à supprimer
+  struct inode *dir_inode = find_inode(map, nb1, nbi, dir_name);
+  if (!dir_inode || !(FROM_LE32(dir_inode->flags) & (1 << 5)))
+  {
+    close_fs(fd, map, size);
+    return print_error("Répertoire introuvable ou non valide.");
+  }
+
+  // Vérifier si le répertoire est vide
+  for (int i = 0; i < 900; i++)
+  {
+    if (dir_inode->direct_blocks[i] != TO_LE32(-1))
+    {
+      close_fs(fd, map, size);
+      return print_error("Erreur: Le répertoire n'est pas vide.");
+    }
+  }
+
+  // Supprimer la référence au répertoire dans le parent
+  for (int i = 0; i < 900; i++)
+  {
+    if (parent_inode->direct_blocks[i] == TO_LE32(dir_inode - get_inode(map, 1 + nb1, 0)))
+    {
+      parent_inode->direct_blocks[i] = TO_LE32(-1);
+      break;
+    }
+  }
+
+  // Mettre à jour le répertoire parent
+  parent_inode->modification_time = TO_LE32(time(NULL));
+  calcul_sha1(parent_inode, 4000, parent_inode->sha1);
+
+  // Supprimer l'inode du répertoire
+  delete_inode(dir_inode, map);
+
+  close_fs(fd, map, size);
+  return 0;
+}
