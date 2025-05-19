@@ -1729,6 +1729,22 @@ int cmd_rmdir(const char *fsname, const char *path)
   char parent_path[256], dir_name[256];
   split_path(path, parent_path, dir_name);
 
+  if (strlen(parent_path) == 0)
+  {
+    struct inode *target_inode = find_inode_folder(map, nb1, nbi, dir_name);
+    if (!target_inode || !(FROM_LE32(target_inode->flags) & (1 << 5)))
+    {
+      close_fs(fd, map, size);
+      return print_error("Répertoire introuvable ou non valide.");
+    }
+    delete_children(target_inode, map);
+    target_inode->flags = TO_LE32(0);
+    target_inode->modification_time = TO_LE32(time(NULL));
+    calcul_sha1(target_inode, 4000, target_inode->sha1);
+    close_fs(fd, map, size);
+    return 0;
+  }
+
   struct inode *target_inode = find_inode_folder(map, nb1, nbi, parent_path);
   if (!target_inode || !(FROM_LE32(target_inode->flags) & (1 << 5)))
   {
