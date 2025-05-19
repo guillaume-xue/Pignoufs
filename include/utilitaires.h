@@ -356,6 +356,65 @@ static int create_file(uint8_t *map, const char *filename)
   return 0;
 }
 
+static int create_directory_racine(uint8_t *map, const char *dirname)
+{
+  int32_t nb1, nbi, nba, nbb;
+  get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
+  int32_t free_idx = -1;
+
+  // Scan inodes
+  for (int i = 0; i < nbi; i++)
+  {
+    struct inode *in = get_inode(map, 1 + nb1, i);
+    if (FROM_LE32(in->flags) & 1)
+    {
+      if (strcmp(in->filename, dirname) == 0)
+      {
+        // Déjà existant, on met à jour la date de modification
+        in->modification_time = time(NULL);
+        calcul_sha1(in, 4000, in->sha1);
+        return 0;
+      }
+    }
+    else if (free_idx < 0)
+    {
+      free_idx = i;
+    }
+  }
+  if (free_idx < 0)
+  {
+    return print_error("mkdir: aucun inode libre disponible");
+  }
+  // Initialiser l'inode comme répertoire et l'allouer dans le bitmap
+  struct inode *in = get_inode(map, 1 + nb1, free_idx);
+  init_inode(in, dirname, true); // true = répertoire
+  in->padding[0] = 1;            // Racine
+  int32_t inode_blk = 1 + nb1 + free_idx;
+  bitmap_alloc(map, inode_blk);
+
+  increment_nb_f(map);
+  return 0;
+}
+
+void delete_children(struct inode *dir, uint8_t *map)
+{
+  for (int i = 0; i < 900; i++)
+  {
+    int32_t child_idx = FROM_LE32(dir->direct_blocks[i]);
+    if (child_idx == -1)
+      continue;
+    struct inode *child = get_inode(map, 1 + nb1, child_idx);
+    if ((FROM_LE32(child->flags) & (1 << 5)))
+    {
+      // Si c'est un sous-répertoire, suppression récursive
+      delete_children(child, map);
+    }
+    delete_inode(child, map);
+    dir->direct_blocks[i] = TO_LE32(-1);
+  }
+  calcul_sha1(dir, 4000, dir->sha1);
+}
+
 // On récupère le dernier bloc écrit
 static int32_t get_last_data_block(uint8_t *map, struct inode *in)
 {
