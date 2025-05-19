@@ -44,6 +44,7 @@ links: $(BIN_DIR)/pignoufs
 	ln -sf $(BIN_DIR)/pignoufs mkdir
 	ln -sf $(BIN_DIR)/pignoufs rmdir
 	ln -sf $(BIN_DIR)/pignoufs tree
+	ln -sf $(BIN_DIR)/pignoufs mv
 
 $(BIN_DIR)/%.o: $(SRC_DIR)/%.c | $(BIN_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@

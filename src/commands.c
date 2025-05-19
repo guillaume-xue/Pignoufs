@@ -128,10 +128,10 @@ int cmd_mkfs(const char *fsname, int nbi, int nba)
 void print_tree(uint8_t *map, int32_t nb1, int32_t nbi, struct inode *inode, int depth, bool *visited_inodes)
 {
   // Vérifier si l'inode a déjà été visité pour éviter les boucles infinies
-  // int inode_index = inode - get_inode(map, 1 + nb1, 0);
-  // if (visited_inodes[inode_index])
-  //   return;
-  // visited_inodes[inode_index] = true;
+  int inode_index = inode - get_inode(map, 1 + nb1, 0);
+  if (visited_inodes[inode_index])
+    return;
+  visited_inodes[inode_index] = true;
 
   // Afficher l'indentation en fonction de la profondeur
   for (int i = 0; i < depth; i++)
@@ -145,16 +145,15 @@ void print_tree(uint8_t *map, int32_t nb1, int32_t nbi, struct inode *inode, int
     return;
 
   // Si c'est une racine, afficher l'arborescence complète
-    for (int i = 0; i < 900; i++)
-    {
-      int32_t block_idx = FROM_LE32(inode->direct_blocks[i]);
-      if (block_idx == -1)
-        break;
+  for (int i = 0; i < 900; i++)
+  {
+    int32_t block_idx = FROM_LE32(inode->direct_blocks[i]);
+    if (block_idx == -1)
+      break;
 
-      struct inode *child_inode = get_inode(map, 1 + nb1, block_idx);
-      print_tree(map, nb1, nbi, child_inode, depth + 1, visited_inodes);
-    }
-  
+    struct inode *child_inode = get_inode(map, 1 + nb1, block_idx);
+    print_tree(map, nb1, nbi, child_inode, depth + 1, visited_inodes);
+  }
 }
 
 // Commande tree
@@ -1498,7 +1497,8 @@ int cmd_fsck(const char *fsname)
 
     pthread_mutex_lock(&queue.mutex);
     int next = (queue.tail + 1) % SHA1_QUEUE_SIZE;
-    while (next == queue.head) { // queue pleine
+    while (next == queue.head)
+    { // queue pleine
       pthread_mutex_unlock(&queue.mutex);
       sched_yield();
       pthread_mutex_lock(&queue.mutex);
@@ -1520,7 +1520,7 @@ int cmd_fsck(const char *fsname)
   // Attendre la fin des threads
   for (int i = 0; i < NB_THREADS; i++)
     pthread_join(threads[i], NULL);
-    
+
   close_fs(fd, map, size);
   return 0;
 }
@@ -1729,8 +1729,6 @@ int cmd_rmdir(const char *fsname, const char *path)
   char parent_path[256], dir_name[256];
   split_path(path, parent_path, dir_name);
 
-
-
   struct inode *target_inode = find_inode_folder(map, nb1, nbi, parent_path);
   if (!target_inode || !(FROM_LE32(target_inode->flags) & (1 << 5)))
   {
@@ -1742,8 +1740,9 @@ int cmd_rmdir(const char *fsname, const char *path)
   int val = -1;
   for (int i = 0; i < 900; i++)
   {
-    dir_inode = get_inode(map, 1+nb1, FROM_LE32(target_inode->direct_blocks[i]));
-    if (dir_inode && strcmp(dir_inode->filename, dir_name) == 0 && (FROM_LE32(dir_inode->flags) & (1 << 5))){
+    dir_inode = get_inode(map, 1 + nb1, FROM_LE32(target_inode->direct_blocks[i]));
+    if (dir_inode && strcmp(dir_inode->filename, dir_name) == 0 && (FROM_LE32(dir_inode->flags) & (1 << 5)))
+    {
       val = i;
       break;
     }
@@ -1755,6 +1754,97 @@ int cmd_rmdir(const char *fsname, const char *path)
   target_inode->direct_blocks[val] = TO_LE32(-1);
   target_inode->modification_time = TO_LE32(time(NULL));
   calcul_sha1(target_inode, 4000, target_inode->sha1);
+
+  close_fs(fd, map, size);
+  return 0;
+}
+
+int cmd_mv(const char *fsname, const char *oldpath, const char *newpath)
+{
+  if (oldpath == NULL || newpath == NULL || strlen(oldpath) == 0 || strlen(newpath) == 0)
+    return print_error("Erreur: Le chemin spécifié est vide.");
+
+  uint8_t *map;
+  size_t size;
+  int fd = open_fs(fsname, &map, &size);
+  if (fd < 0)
+    return print_error("Erreur lors de l'ouverture du système de fichiers");
+
+  int32_t nb1, nbi, nba, nbb;
+  get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
+
+  // Découper les chemins source et destination
+  char old_parent_path[256], old_name[256];
+  char new_parent_path[256], new_name[256];
+  split_path(oldpath, old_parent_path, old_name);
+  split_path(newpath, new_parent_path, new_name);
+
+  // Trouver le répertoire parent source et destination
+  struct inode *old_parent = find_inode_folder(map, nb1, nbi, old_parent_path);
+  struct inode *new_parent = find_inode_folder(map, nb1, nbi, new_parent_path);
+
+  if (!old_parent || !(FROM_LE32(old_parent->flags) & (1 << 5)))
+  {
+    close_fs(fd, map, size);
+    return print_error("Répertoire source introuvable ou non valide.");
+  }
+  if (!new_parent || !(FROM_LE32(new_parent->flags) & (1 << 5)))
+  {
+    close_fs(fd, map, size);
+    return print_error("Répertoire cible introuvable ou non valide.");
+  }
+
+  // Trouver l'inode à déplacer dans l'ancien parent
+  struct inode *moved_inode = NULL;
+  int old_idx = -1;
+  for (int i = 0; i < 900; i++)
+  {
+    int32_t idx = FROM_LE32(old_parent->direct_blocks[i]);
+    if (idx < 0)
+      continue;
+    struct inode *in = get_inode(map, 1 + nb1, idx);
+    if (in && strcmp(in->filename, old_name) == 0)
+    {
+      moved_inode = in;
+      old_idx = i;
+      break;
+    }
+  }
+  if (!moved_inode)
+  {
+    close_fs(fd, map, size);
+    return print_error("Fichier ou dossier à déplacer introuvable.");
+  }
+
+  // Retirer du parent source
+  old_parent->direct_blocks[old_idx] = TO_LE32(-1);
+  old_parent->modification_time = TO_LE32(time(NULL));
+  calcul_sha1(old_parent, 4000, old_parent->sha1);
+
+  // Ajouter dans le nouveau parent
+  int added = 0;
+  for (int i = 0; i < 900; i++)
+  {
+    if (FROM_LE32(new_parent->direct_blocks[i]) == -1)
+    {
+      new_parent->direct_blocks[i] = TO_LE32(moved_inode - get_inode(map, 1 + nb1, 0));
+      added = 1;
+      break;
+    }
+  }
+  if (!added)
+  {
+    close_fs(fd, map, size);
+    return print_error("Impossible d'ajouter l'inode dans le nouveau répertoire (trop d'entrées).");
+  }
+  new_parent->modification_time = TO_LE32(time(NULL));
+  calcul_sha1(new_parent, 4000, new_parent->sha1);
+
+  // Mettre à jour le nom
+  strncpy(moved_inode->filename, new_name, sizeof(moved_inode->filename) - 1);
+  moved_inode->filename[sizeof(moved_inode->filename) - 1] = '\0';
+  moved_inode->modification_time = TO_LE32(time(NULL));
+  calcul_sha1(moved_inode, 4000, moved_inode->sha1);
 
   close_fs(fd, map, size);
   return 0;

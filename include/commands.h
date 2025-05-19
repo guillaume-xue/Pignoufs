@@ -22,5 +22,6 @@ int cmd_find(const char *fsname, const char *type, const char *name, int days, c
 int cmd_grep(const char *fsname, const char *pattern);
 int cmd_mkdir(const char *fsname, const char *dirname);
 int cmd_rmdir(const char *fsname, const char *dirname);
+int cmd_mv(const char *fsname, const char *oldpath, const char *newpath);
 
 #endif

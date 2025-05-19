@@ -353,6 +353,24 @@ int main(int argc, char *argv[])
     path += 2; // Ignorer les deux premiers caractères
     return cmd_rmdir(fsname, path);
   }
+  else if (strcmp(command, "mv") == 0)
+  {
+    if (argc < 4)
+    {
+      fprintf(stderr, "Erreur : la commande 'mv' nécessite au moins 3 arguments.\n");
+      return 1;
+    }
+    const char *oldpath = argv[2];
+    const char *newpath = argv[3];
+    if (strncmp(oldpath, "//", 2) != 0 || strncmp(newpath, "//", 2) != 0)
+    {
+      fprintf(stderr, "Erreur: Les noms de fichiers internes doivent commencer par \"//\".\n");
+      return 1;
+    }
+    oldpath += 2; // Ignorer les deux premiers caractères
+    newpath += 2; // Ignorer les deux premiers caractères
+    return cmd_mv(fsname, oldpath, newpath);
+  }
   else
   {
     fprintf(stderr, "Erreur : commande inconnue '%s'\n", command);
