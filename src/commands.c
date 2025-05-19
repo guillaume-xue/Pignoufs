@@ -1,6 +1,8 @@
 #include "../include/structures.h"
 #include "../include/utilitaires.h"
 
+#define NB_THREADS 6
+
 volatile sig_atomic_t keep_running = 1;
 void handle_sigterm(int sig)
 {
@@ -1373,6 +1375,11 @@ int cmd_addinput(const char *fsname, const char *filename)
 
 int cmd_fsck(const char *fsname)
 {
+  sha1_queue_t queue = {.head = 0, .tail = 0, .done = 0, .mutex = PTHREAD_MUTEX_INITIALIZER, .cond = PTHREAD_COND_INITIALIZER};
+  pthread_t threads[NB_THREADS];
+  for (int i = 0; i < NB_THREADS; i++)
+    pthread_create(&threads[i], NULL, sha1_worker, &queue);
+
   uint8_t *map;
   size_t size;
   int fd = open_fs(fsname, &map, &size);
@@ -1483,15 +1490,32 @@ int cmd_fsck(const char *fsname)
         return 1;
       }
     }
-    uint8_t sha1[20];
-    calcul_sha1(bb->bits, 4000, sha1);
-    if (memcmp(bb->sha1, sha1, 20) != 0)
-    {
-      print_error("Erreur: bloc de bitmap a un SHA1 incorrect");
-      close_fs(fd, map, size);
-      return 1;
+
+    pthread_mutex_lock(&queue.mutex);
+    int next = (queue.tail + 1) % SHA1_QUEUE_SIZE;
+    while (next == queue.head) { // queue pleine
+      pthread_mutex_unlock(&queue.mutex);
+      sched_yield();
+      pthread_mutex_lock(&queue.mutex);
+      next = (queue.tail + 1) % SHA1_QUEUE_SIZE;
     }
+    queue.tasks[queue.tail] = (sha1_task_t){.data = bb, .len = 4000, .block_num = i, .block_type = bb->type};
+    memcpy(queue.tasks[queue.tail].sha1_ref, bb->sha1, 20);
+    queue.tail = next;
+    pthread_cond_signal(&queue.cond);
+    pthread_mutex_unlock(&queue.mutex);
   }
+
+  // Signaler la fin
+  pthread_mutex_lock(&queue.mutex);
+  queue.done = 1;
+  pthread_cond_broadcast(&queue.cond);
+  pthread_mutex_unlock(&queue.mutex);
+
+  // Attendre la fin des threads
+  for (int i = 0; i < NB_THREADS; i++)
+    pthread_join(threads[i], NULL);
+    
   close_fs(fd, map, size);
   return 0;
 }

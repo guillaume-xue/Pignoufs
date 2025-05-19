@@ -12,7 +12,7 @@ OBJECTS = $(SOURCES:$(SRC_DIR)/%.c=$(BIN_DIR)/%.o)
 EXECUTABLES = $(BIN_DIR)/pignoufs_mmap_sha1 $(BIN_DIR)/pignoufs_corrupt $(BIN_DIR)/pignoufs
 PIGNOUFS_MMAP_SHA1_DEPS = $(BIN_DIR)/mmap_sha1.o
 PIGNOUFS_CORRUPT_DEPS = $(BIN_DIR)/corrupt.o
-PIGNOUFS_DEPS = $(BIN_DIR)/main.o $(BIN_DIR)/commands.o
+PIGNOUFS_DEPS = $(BIN_DIR)/main.o $(BIN_DIR)/commands.o $(BIN_DIR)/sha1.o
 
 all: $(EXECUTABLES) links
 
@@ -56,6 +56,6 @@ $(BIN_DIR):
 
 clean:
 	rm -rf $(BIN_DIR)
-	rm -f mkfs ls df cp rm lock chmod cat input add addinput fsck mount find grep 
+	rm -f mkfs ls df cp rm lock chmod cat input add addinput fsck mount find grep mkdir rmdir tree
 
 .PHONY: all clean links

@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include "../include/commands.h"
+#include "../include/sha1.h"
 
 static void print_usage()
 {

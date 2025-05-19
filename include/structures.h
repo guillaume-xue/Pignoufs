@@ -9,8 +9,6 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
-#include <openssl/sha.h>
-#include <openssl/evp.h>
 #include <time.h>
 #include <endian.h>
 #include <math.h>

@@ -1,6 +1,9 @@
 #ifndef COMMANDS_H
 #define COMMANDS_H
 
+#include <pthread.h>
+#include <stdint.h>
+
 int cmd_mkfs(const char *fsname, int nbi, int nba);
 int cmd_ls(const char *fsname, const char *filename);
 int cmd_tree(const char *fsname, const char *path);
