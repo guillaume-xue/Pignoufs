@@ -16,6 +16,26 @@ static void fatal_error(const char *msg)
   exit(EXIT_FAILURE);
 }
 
+static void split_path(const char *path, char *parent_path, char *dir_name)
+{
+  const char *last_slash = strrchr(path, '/');
+  if (last_slash)
+  {
+    size_t parent_len = last_slash - path;
+    strncpy(parent_path, path, parent_len);
+    parent_path[parent_len] = '\0';
+    strncpy(dir_name, last_slash + 1, 255);
+    dir_name[255] = '\0';
+  }
+  else
+  {
+    // Pas de slash dans le chemin, le répertoire parent est vide
+    parent_path[0] = '\0';
+    strncpy(dir_name, path, 255);
+    dir_name[255] = '\0';
+  }
+}
+
 
 // Helpers pour accéder aux blocs
 static struct pignoufs *get_superblock(uint8_t *map)
@@ -180,7 +200,47 @@ static struct inode *find_inode(uint8_t *map, int32_t nb1, int32_t nbi, const ch
   return researched;
 }
 
-static int32_t find_node_pos(uint8_t *map, const char *name)
+static struct inode *find_inode_folder(uint8_t *map, int32_t nb1, int32_t nbi, const char *name)
+{
+  int cpt = 0;
+  char *token = strtok(name, "/");
+  int val = -1;
+  struct inode *parent = NULL;
+  struct inode *in = NULL;
+  
+  while (token != NULL)
+  {
+    if (parent == NULL)
+    {
+      parent = find_inode(map, nb1, nbi, token);
+    }else{
+      for(int i = 0; i < 900; i++)
+      {
+        if (parent->direct_blocks[i] != -1)
+        {
+          in = get_inode(map, 1 + nb1, FROM_LE32(parent->direct_blocks[i]));
+          if (FROM_LE32(in->flags) & 1)
+          {
+            if (strcmp(in->filename, token) == 0 &&  
+                ((FROM_LE32(in->flags) & (1 << 5)) == 1) && in->profondeur == cpt)
+            {
+              val = FROM_LE32(parent->direct_blocks[i]);
+              break;
+            }
+          }
+        }
+      }
+      parent = in;
+    }
+    cpt++;
+    token = strtok(NULL, "/");
+  }
+
+  return parent;
+
+}
+
+static int32_t find_node_pos(uint8_t *map, const char *name, bool type, int profondeur)
 {
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
@@ -189,7 +249,8 @@ static int32_t find_node_pos(uint8_t *map, const char *name)
     struct inode *in = get_inode(map, 1 + nb1, i);
     if (FROM_LE32(in->flags) & 1)
     {
-      if (strcmp(in->filename, name) == 0)
+      if (strcmp(in->filename, name) == 0 &&  
+          ((type == 0 && (FROM_LE32(in->flags) & (1 << 5)) == type)) && in->profondeur == profondeur)
         return 1 + nb1 + i;
     }
   }
@@ -299,7 +360,14 @@ static void dealloc_data_block(struct inode *in, uint8_t *map)
 static void delete_inode(struct inode *in, uint8_t *map)
 {
   dealloc_data_block(in, map);
-  int32_t pos = find_node_pos(map, in->filename);
+  int32_t pos = NULL;
+  if(in->flags & (1 << 5))
+  {
+    pos = find_node_pos(map, in->filename, true, in->profondeur);
+  }else{
+    pos = find_node_pos(map, in->filename, false, in->profondeur);
+  }
+
   if (pos == -1)
   {
     fprintf(stderr, "Erreur: inode introuvable\n");
@@ -356,7 +424,7 @@ static int create_file(uint8_t *map, const char *filename)
   return 0;
 }
 
-static int create_directory_racine(uint8_t *map, const char *dirname)
+static int create_directory_main(uint8_t *map, const char *dirname, int profondeur)
 {
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
@@ -368,36 +436,80 @@ static int create_directory_racine(uint8_t *map, const char *dirname)
     struct inode *in = get_inode(map, 1 + nb1, i);
     if (FROM_LE32(in->flags) & 1)
     {
-      if (strcmp(in->filename, dirname) == 0)
-      {
-        // Déjà existant, on met à jour la date de modification
-        in->modification_time = time(NULL);
-        calcul_sha1(in, 4000, in->sha1);
-        return 0;
+      if(FROM_LE32(in->flags) & (1 << 5) && FROM_LE32(in->profondeur) == profondeur){
+        // Si le répertoire existe déjà, on met à jour son temps de modification
+        if (strcmp(in->filename, dirname) == 0)
+        {
+          in->modification_time = time(NULL);
+          calcul_sha1(in, 4000, in->sha1);
+          return i; // Renvoie l'index de l'inode
+        }
       }
     }
     else if (free_idx < 0)
     {
-      free_idx = i;
+      free_idx = i; 
     }
   }
   if (free_idx < 0)
   {
-    return print_error("mkdir: aucun inode libre disponible");
+    fatal_error("mkdir: aucun inode libre disponible");
   }
   // Initialiser l'inode comme répertoire et l'allouer dans le bitmap
   struct inode *in = get_inode(map, 1 + nb1, free_idx);
   init_inode(in, dirname, true); // true = répertoire
-  in->padding[0] = 1;            // Racine
+  in->profondeur = TO_LE32(profondeur);           // Racine
   int32_t inode_blk = 1 + nb1 + free_idx;
   bitmap_alloc(map, inode_blk);
 
+  calcul_sha1(in, 4000, in->sha1);
+
   increment_nb_f(map);
-  return 0;
+  return free_idx; // Renvoie l'index de l'inode
+}
+
+static int create_directory(uint8_t *map, char *dirname)
+{
+  char *token;
+  token = strtok(dirname, "/");
+  int32_t nb1, nbi, nba, nbb;
+  get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
+  int cpt = 0;
+  struct inode *parent = NULL;
+  struct inode *in = NULL;
+  int val = -1;
+  while (token != NULL)
+  {
+    if (parent == NULL)
+    {
+      val = create_directory_main(map, token, cpt);
+      parent = get_inode(map, 1 + nb1, val);
+    }else{
+      val = create_directory_main(map, token, cpt);
+      in = get_inode(map, 1 + nb1, val);
+      for(int i = 0; i < 900; i++)
+      {
+        if (parent->direct_blocks[i] == -1)
+        {
+          parent->direct_blocks[i] = TO_LE32(val);
+          break;
+        }
+      }
+      parent->modification_time = TO_LE32(time(NULL));
+      calcul_sha1(parent, 4000, parent->sha1);
+      parent = in;
+    }
+    cpt++;
+    token = strtok(NULL, "/");
+  }
+  
+  return val; // Renvoie l'index de l'inode
 }
 
 void delete_children(struct inode *dir, uint8_t *map)
 {
+  int32_t nb1, nbi, nba, nbb;
+  get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
   for (int i = 0; i < 900; i++)
   {
     int32_t child_idx = FROM_LE32(dir->direct_blocks[i]);
@@ -543,24 +655,6 @@ static int unlock_block(int fd, int64_t block_offset)
   return fcntl(fd, F_SETLK, &fl);
 }
 
-static void split_path(const char *path, char *parent_path, char *dir_name)
-{
-  const char *last_slash = strrchr(path, '/');
-  if (last_slash)
-  {
-    size_t parent_len = last_slash - path;
-    strncpy(parent_path, path, parent_len);
-    parent_path[parent_len] = '\0';
-    strncpy(dir_name, last_slash + 1, 255);
-    dir_name[255] = '\0';
-  }
-  else
-  {
-    // Pas de slash dans le chemin, le répertoire parent est vide
-    parent_path[0] = '\0';
-    strncpy(dir_name, path, 255);
-    dir_name[255] = '\0';
-  }
-}
+
 
 #endif

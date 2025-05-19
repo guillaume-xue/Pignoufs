@@ -128,10 +128,10 @@ int cmd_mkfs(const char *fsname, int nbi, int nba)
 void print_tree(uint8_t *map, int32_t nb1, int32_t nbi, struct inode *inode, int depth, bool *visited_inodes)
 {
   // Vérifier si l'inode a déjà été visité pour éviter les boucles infinies
-  int inode_index = inode - get_inode(map, 1 + nb1, 0);
-  if (visited_inodes[inode_index])
-    return;
-  visited_inodes[inode_index] = true;
+  // int inode_index = inode - get_inode(map, 1 + nb1, 0);
+  // if (visited_inodes[inode_index])
+  //   return;
+  // visited_inodes[inode_index] = true;
 
   // Afficher l'indentation en fonction de la profondeur
   for (int i = 0; i < depth; i++)
@@ -145,8 +145,6 @@ void print_tree(uint8_t *map, int32_t nb1, int32_t nbi, struct inode *inode, int
     return;
 
   // Si c'est une racine, afficher l'arborescence complète
-  if (inode->padding[0] == 1)
-  {
     for (int i = 0; i < 900; i++)
     {
       int32_t block_idx = FROM_LE32(inode->direct_blocks[i]);
@@ -156,7 +154,7 @@ void print_tree(uint8_t *map, int32_t nb1, int32_t nbi, struct inode *inode, int
       struct inode *child_inode = get_inode(map, 1 + nb1, block_idx);
       print_tree(map, nb1, nbi, child_inode, depth + 1, visited_inodes);
     }
-  }
+  
 }
 
 // Commande tree
@@ -182,7 +180,7 @@ int cmd_tree(const char *fsname)
   for (int i = 0; i < nbi; i++)
   {
     struct inode *in = get_inode(map, 1 + nb1, i);
-    if ((FROM_LE32(in->flags) & 1) && (FROM_LE32(in->flags) & (1 << 5)) && in->padding[0] == 1)
+    if ((FROM_LE32(in->flags) & 1) && (FROM_LE32(in->flags) & (1 << 5)) && in->profondeur == 0)
     {
       print_tree(map, nb1, nbi, in, 0, visited_inodes);
       racine_trouvee = 1;
@@ -271,7 +269,7 @@ int cmd_df(const char *fsname)
   return 0;
 }
 
-int cmd_cp(const char *fsname, const char *filename1, const char *filename2, bool mode1, bool mode2)
+int cmd_cp(const char *fsname, const char *filename1, const char *filename2, bool mode1, bool mode2, bool directory)
 {
   uint8_t *map;
   size_t size;
@@ -279,383 +277,383 @@ int cmd_cp(const char *fsname, const char *filename1, const char *filename2, boo
   if (fd < 0)
     return print_error("Erreur lors de l'ouverture du système de fichiers");
 
-  int32_t nb1, nbi, nba, nbb;
-  get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
+  // int32_t nb1, nbi, nba, nbb;
+  // get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
 
-  if (mode1 && mode2) // Si les deux fichiers sont internes
-  {
-    struct inode *in = find_inode(map, nb1, nbi, filename1);
-    if (!in)
-    {
-      print_error("Fichier source introuvable, impossible à copier");
-      close_fs(fd, map, size);
-      return 1;
-    }
-    struct inode *in2 = find_inode(map, nb1, nbi, filename2);
-    if (!in2)
-    {
-      int status = create_file(map, filename2);
-      if (status == -1)
-      {
-        close_fs(fd, map, size);
-        return 1;
-      }
-      in2 = find_inode(map, nb1, nbi, filename2);
-    }
-    else
-    {
-      dealloc_data_block(in2, map);
-    }
-    for (int i = 0; i < 900; i++)
-    {
-      int32_t b = FROM_LE32(in->direct_blocks[i]);
-      if (b < 0)
-        break;
+  // if (mode1 && mode2) // Si les deux fichiers sont internes
+  // {
+  //   struct inode *in = find_inode_folder_file(map, nb1, nbi, filename1);
+  //   if (!in)
+  //   {
+  //     print_error("Fichier source introuvable, impossible à copier");
+  //     close_fs(fd, map, size);
+  //     return 1;
+  //   }
+  //   struct inode *in2 = find_inode_folder_file(map, nb1, nbi, filename2);
+  //   if (!in2)
+  //   {
+  //     int status = create_file(map, filename2);
+  //     if (status == -1)
+  //     {
+  //       close_fs(fd, map, size);
+  //       return 1;
+  //     }
+  //     in2 = find_inode(map, nb1, nbi, filename2);
+  //   }
+  //   else
+  //   {
+  //     dealloc_data_block(in2, map);
+  //   }
+  //   for (int i = 0; i < 900; i++)
+  //   {
+  //     int32_t b = FROM_LE32(in->direct_blocks[i]);
+  //     if (b < 0)
+  //       break;
 
-      // Verrouiller le bloc source
-      if (lock_block(fd, b * 4096, F_RDLCK) < 0)
-      {
-        print_error("Erreur lors du verrouillage du bloc source");
-        close_fs(fd, map, size);
-        return 1;
-      }
+  //     // Verrouiller le bloc source
+  //     if (lock_block(fd, b * 4096, F_RDLCK) < 0)
+  //     {
+  //       print_error("Erreur lors du verrouillage du bloc source");
+  //       close_fs(fd, map, size);
+  //       return 1;
+  //     }
 
-      struct data_block *data_position = get_data_block(map, b);
-      int32_t new_block = alloc_data_block(map);
+  //     struct data_block *data_position = get_data_block(map, b);
+  //     int32_t new_block = alloc_data_block(map);
 
-      // Verrouiller le bloc destination
-      if (lock_block(fd, new_block * 4096, F_WRLCK) < 0)
-      {
-        print_error("Erreur lors du verrouillage du bloc destination");
-        unlock_block(fd, b * 4096);
-        close_fs(fd, map, size);
-        return 1;
-      }
+  //     // Verrouiller le bloc destination
+  //     if (lock_block(fd, new_block * 4096, F_WRLCK) < 0)
+  //     {
+  //       print_error("Erreur lors du verrouillage du bloc destination");
+  //       unlock_block(fd, b * 4096);
+  //       close_fs(fd, map, size);
+  //       return 1;
+  //     }
 
-      struct data_block *new_data_position = get_data_block(map, new_block);
-      memcpy(new_data_position->data, data_position->data, 4000);
-      in2->direct_blocks[i] = TO_LE32(new_block);
-      in2->file_size = TO_LE32(FROM_LE32(in2->file_size) + 4000);
-      in2->modification_time = TO_LE32(time(NULL));
-      calcul_sha1(new_data_position->data, 4000, new_data_position->sha1);
+  //     struct data_block *new_data_position = get_data_block(map, new_block);
+  //     memcpy(new_data_position->data, data_position->data, 4000);
+  //     in2->direct_blocks[i] = TO_LE32(new_block);
+  //     in2->file_size = TO_LE32(FROM_LE32(in2->file_size) + 4000);
+  //     in2->modification_time = TO_LE32(time(NULL));
+  //     calcul_sha1(new_data_position->data, 4000, new_data_position->sha1);
 
-      // Déverrouiller les blocs
-      unlock_block(fd, b * 4096);
-      unlock_block(fd, new_block * 4096);
-    }
-    if ((int32_t)FROM_LE32(in->double_indirect_block) >= 0)
-    {
-      struct address_block *dbl = get_address_block(map, FROM_LE32(in->double_indirect_block));
-      if (FROM_LE32(dbl->type) == 6)
-      {
-        for (int i = 0; i < 1000; i++)
-        {
-          int32_t db = FROM_LE32(dbl->addresses[i]);
-          if (db < 0)
-            break;
+  //     // Déverrouiller les blocs
+  //     unlock_block(fd, b * 4096);
+  //     unlock_block(fd, new_block * 4096);
+  //   }
+  //   if ((int32_t)FROM_LE32(in->double_indirect_block) >= 0)
+  //   {
+  //     struct address_block *dbl = get_address_block(map, FROM_LE32(in->double_indirect_block));
+  //     if (FROM_LE32(dbl->type) == 6)
+  //     {
+  //       for (int i = 0; i < 1000; i++)
+  //       {
+  //         int32_t db = FROM_LE32(dbl->addresses[i]);
+  //         if (db < 0)
+  //           break;
 
-          // Verrouiller le bloc source
-          if (lock_block(fd, db * 4096, F_RDLCK) < 0)
-          {
-            print_error("Erreur lors du verrouillage du bloc source");
-            close_fs(fd, map, size);
-            return 1;
-          }
+  //         // Verrouiller le bloc source
+  //         if (lock_block(fd, db * 4096, F_RDLCK) < 0)
+  //         {
+  //           print_error("Erreur lors du verrouillage du bloc source");
+  //           close_fs(fd, map, size);
+  //           return 1;
+  //         }
 
-          struct data_block *data_position2 = get_data_block(map, db);
-          int32_t new_block = alloc_data_block(map);
+  //         struct data_block *data_position2 = get_data_block(map, db);
+  //         int32_t new_block = alloc_data_block(map);
 
-          // Verrouiller le bloc destination
-          if (lock_block(fd, new_block * 4096, F_WRLCK) < 0)
-          {
-            print_error("Erreur lors du verrouillage du bloc destination");
-            unlock_block(fd, db * 4096);
-            close_fs(fd, map, size);
-            return 1;
-          }
+  //         // Verrouiller le bloc destination
+  //         if (lock_block(fd, new_block * 4096, F_WRLCK) < 0)
+  //         {
+  //           print_error("Erreur lors du verrouillage du bloc destination");
+  //           unlock_block(fd, db * 4096);
+  //           close_fs(fd, map, size);
+  //           return 1;
+  //         }
 
-          struct data_block *new_data_position2 = get_data_block(map, new_block);
-          memcpy(new_data_position2->data, data_position2->data, 4000);
-          in2->direct_blocks[i] = TO_LE32(new_block);
-          in2->file_size = TO_LE32(FROM_LE32(in2->file_size) + 4000);
-          in2->modification_time = TO_LE32(time(NULL));
-          calcul_sha1(new_data_position2->data, 4000, new_data_position2->sha1);
+  //         struct data_block *new_data_position2 = get_data_block(map, new_block);
+  //         memcpy(new_data_position2->data, data_position2->data, 4000);
+  //         in2->direct_blocks[i] = TO_LE32(new_block);
+  //         in2->file_size = TO_LE32(FROM_LE32(in2->file_size) + 4000);
+  //         in2->modification_time = TO_LE32(time(NULL));
+  //         calcul_sha1(new_data_position2->data, 4000, new_data_position2->sha1);
 
-          // Déverrouiller les blocs
-          unlock_block(fd, db * 4096);
-          unlock_block(fd, new_block * 4096);
-        }
-      }
-      else
-      {
-        for (int i = 0; i < 1000; i++)
-        {
-          int32_t db = FROM_LE32(dbl->addresses[i]);
-          if (db < 0)
-            break;
+  //         // Déverrouiller les blocs
+  //         unlock_block(fd, db * 4096);
+  //         unlock_block(fd, new_block * 4096);
+  //       }
+  //     }
+  //     else
+  //     {
+  //       for (int i = 0; i < 1000; i++)
+  //       {
+  //         int32_t db = FROM_LE32(dbl->addresses[i]);
+  //         if (db < 0)
+  //           break;
 
-          // Verrouiller le bloc source
-          if (lock_block(fd, db * 4096, F_RDLCK) < 0)
-          {
-            print_error("Erreur lors du verrouillage du bloc source");
-            close_fs(fd, map, size);
-            return 1;
-          }
+  //         // Verrouiller le bloc source
+  //         if (lock_block(fd, db * 4096, F_RDLCK) < 0)
+  //         {
+  //           print_error("Erreur lors du verrouillage du bloc source");
+  //           close_fs(fd, map, size);
+  //           return 1;
+  //         }
 
-          struct address_block *sib = get_address_block(map, db);
-          for (int j = 0; j < 1000; j++)
-          {
-            int32_t db2 = FROM_LE32(sib->addresses[j]);
-            if (db2 < 0)
-              break;
+  //         struct address_block *sib = get_address_block(map, db);
+  //         for (int j = 0; j < 1000; j++)
+  //         {
+  //           int32_t db2 = FROM_LE32(sib->addresses[j]);
+  //           if (db2 < 0)
+  //             break;
 
-            // Verrouiller le bloc source
-            if (lock_block(fd, db2 * 4096, F_RDLCK) < 0)
-            {
-              print_error("Erreur lors du verrouillage du bloc source");
-              unlock_block(fd, db * 4096);
-              close_fs(fd, map, size);
-              return 1;
-            }
+  //           // Verrouiller le bloc source
+  //           if (lock_block(fd, db2 * 4096, F_RDLCK) < 0)
+  //           {
+  //             print_error("Erreur lors du verrouillage du bloc source");
+  //             unlock_block(fd, db * 4096);
+  //             close_fs(fd, map, size);
+  //             return 1;
+  //           }
 
-            struct data_block *data_position3 = get_data_block(map, db2);
-            int32_t new_block = alloc_data_block(map);
+  //           struct data_block *data_position3 = get_data_block(map, db2);
+  //           int32_t new_block = alloc_data_block(map);
 
-            // Verrouiller le bloc destination
-            if (lock_block(fd, new_block * 4096, F_WRLCK) < 0)
-            {
-              print_error("Erreur lors du verrouillage du bloc destination");
-              unlock_block(fd, db2 * 4096);
-              unlock_block(fd, db * 4096);
-              close_fs(fd, map, size);
-              return 1;
-            }
+  //           // Verrouiller le bloc destination
+  //           if (lock_block(fd, new_block * 4096, F_WRLCK) < 0)
+  //           {
+  //             print_error("Erreur lors du verrouillage du bloc destination");
+  //             unlock_block(fd, db2 * 4096);
+  //             unlock_block(fd, db * 4096);
+  //             close_fs(fd, map, size);
+  //             return 1;
+  //           }
 
-            struct data_block *new_data_position3 = get_data_block(map, new_block);
-            memcpy(new_data_position3->data, data_position3->data, 4000);
-            in2->direct_blocks[i] = TO_LE32(new_block);
-            in2->file_size = TO_LE32(FROM_LE32(in2->file_size) + 4000);
-            in2->modification_time = TO_LE32(time(NULL));
-            calcul_sha1(new_data_position3->data, 4000, new_data_position3->sha1);
+  //           struct data_block *new_data_position3 = get_data_block(map, new_block);
+  //           memcpy(new_data_position3->data, data_position3->data, 4000);
+  //           in2->direct_blocks[i] = TO_LE32(new_block);
+  //           in2->file_size = TO_LE32(FROM_LE32(in2->file_size) + 4000);
+  //           in2->modification_time = TO_LE32(time(NULL));
+  //           calcul_sha1(new_data_position3->data, 4000, new_data_position3->sha1);
 
-            // Déverrouiller les blocs
-            unlock_block(fd, db2 * 4096);
-            unlock_block(fd, new_block * 4096);
-          }
+  //           // Déverrouiller les blocs
+  //           unlock_block(fd, db2 * 4096);
+  //           unlock_block(fd, new_block * 4096);
+  //         }
 
-          // Déverrouiller le bloc source
-          unlock_block(fd, db * 4096);
-        }
-      }
-    }
-    calcul_sha1(in2, 4000, in2->sha1);
-  }
-  else if (mode1 && !mode2) // Si le premier fichier est interne et le second externe
-  {
-    struct inode *in = find_inode(map, nb1, nbi, filename1);
-    if (!in)
-    {
-      print_error("Fichier source introuvable, impossible à copier");
-      close_fs(fd, map, size);
-      return 1;
-    }
-    int32_t file_size = FROM_LE32(in->file_size);
-    int fd2 = open(filename2, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-    if (fd2 < 0)
-    {
-      print_error("open: erreur d'ouverture du fichier externe");
-      close_fs(fd, map, size);
-      return 1;
-    }
-    for (int i = 0; i < 900 && file_size > 0; i++)
-    {
-      int32_t b = FROM_LE32(in->direct_blocks[i]);
-      if (b < 0)
-        break;
+  //         // Déverrouiller le bloc source
+  //         unlock_block(fd, db * 4096);
+  //       }
+  //     }
+  //   }
+  //   calcul_sha1(in2, 4000, in2->sha1);
+  // }
+  // else if (mode1 && !mode2) // Si le premier fichier est interne et le second externe
+  // {
+  //   struct inode *in = find_inode(map, nb1, nbi, filename1);
+  //   if (!in)
+  //   {
+  //     print_error("Fichier source introuvable, impossible à copier");
+  //     close_fs(fd, map, size);
+  //     return 1;
+  //   }
+  //   int32_t file_size = FROM_LE32(in->file_size);
+  //   int fd2 = open(filename2, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+  //   if (fd2 < 0)
+  //   {
+  //     print_error("open: erreur d'ouverture du fichier externe");
+  //     close_fs(fd, map, size);
+  //     return 1;
+  //   }
+  //   for (int i = 0; i < 900 && file_size > 0; i++)
+  //   {
+  //     int32_t b = FROM_LE32(in->direct_blocks[i]);
+  //     if (b < 0)
+  //       break;
 
-      // Verrouiller le bloc source
-      if (lock_block(fd, b * 4096, F_RDLCK) < 0)
-      {
-        print_error("Erreur lors du verrouillage du bloc source");
-        close_fs(fd, map, size);
-        close(fd2);
-        return 1;
-      }
+  //     // Verrouiller le bloc source
+  //     if (lock_block(fd, b * 4096, F_RDLCK) < 0)
+  //     {
+  //       print_error("Erreur lors du verrouillage du bloc source");
+  //       close_fs(fd, map, size);
+  //       close(fd2);
+  //       return 1;
+  //     }
 
-      uint8_t *data_position = (uint8_t *)get_data_block(map, b);
-      uint32_t buffer = file_size < 4000 ? file_size : 4000;
-      int written = write(fd2, data_position, buffer);
-      if (written == -1)
-      {
-        print_error("write: erreur d'écriture");
-        unlock_block(fd, b * 4096);
-        close_fs(fd, map, size);
-        close(fd2);
-        return 1;
-      }
-      file_size -= buffer;
+  //     uint8_t *data_position = (uint8_t *)get_data_block(map, b);
+  //     uint32_t buffer = file_size < 4000 ? file_size : 4000;
+  //     int written = write(fd2, data_position, buffer);
+  //     if (written == -1)
+  //     {
+  //       print_error("write: erreur d'écriture");
+  //       unlock_block(fd, b * 4096);
+  //       close_fs(fd, map, size);
+  //       close(fd2);
+  //       return 1;
+  //     }
+  //     file_size -= buffer;
 
-      // Déverrouiller le bloc source
-      unlock_block(fd, b * 4096);
-    }
-    if ((int32_t)FROM_LE32(in->double_indirect_block) < 0)
-    {
-      struct address_block *dbl = get_address_block(map, FROM_LE32(in->double_indirect_block));
-      if (FROM_LE32(dbl->type) == 6)
-      {
-        for (int i = 0; i < 1000 && file_size > 0; i++)
-        {
-          int32_t db = FROM_LE32(dbl->addresses[i]);
-          if (db < 0)
-            break;
+  //     // Déverrouiller le bloc source
+  //     unlock_block(fd, b * 4096);
+  //   }
+  //   if ((int32_t)FROM_LE32(in->double_indirect_block) < 0)
+  //   {
+  //     struct address_block *dbl = get_address_block(map, FROM_LE32(in->double_indirect_block));
+  //     if (FROM_LE32(dbl->type) == 6)
+  //     {
+  //       for (int i = 0; i < 1000 && file_size > 0; i++)
+  //       {
+  //         int32_t db = FROM_LE32(dbl->addresses[i]);
+  //         if (db < 0)
+  //           break;
 
-          // Verrouiller le bloc source
-          if (lock_block(fd, db * 4096, F_RDLCK) < 0)
-          {
-            print_error("Erreur lors du verrouillage du bloc source");
-            close_fs(fd, map, size);
-            close(fd2);
-            return 1;
-          }
+  //         // Verrouiller le bloc source
+  //         if (lock_block(fd, db * 4096, F_RDLCK) < 0)
+  //         {
+  //           print_error("Erreur lors du verrouillage du bloc source");
+  //           close_fs(fd, map, size);
+  //           close(fd2);
+  //           return 1;
+  //         }
 
-          uint8_t *data_position2 = (uint8_t *)get_data_block(map, db);
-          uint32_t buffer = file_size < 4000 ? file_size : 4000;
-          int written = write(fd2, data_position2, buffer);
-          if (written == -1)
-          {
-            print_error("write: erreur d'écriture");
-            unlock_block(fd, db * 4096);
-            close_fs(fd, map, size);
-            close(fd2);
-            return 1;
-          }
-          file_size -= buffer;
+  //         uint8_t *data_position2 = (uint8_t *)get_data_block(map, db);
+  //         uint32_t buffer = file_size < 4000 ? file_size : 4000;
+  //         int written = write(fd2, data_position2, buffer);
+  //         if (written == -1)
+  //         {
+  //           print_error("write: erreur d'écriture");
+  //           unlock_block(fd, db * 4096);
+  //           close_fs(fd, map, size);
+  //           close(fd2);
+  //           return 1;
+  //         }
+  //         file_size -= buffer;
 
-          // Déverrouiller le bloc source
-          unlock_block(fd, db * 4096);
-        }
-      }
-      else
-      {
-        for (int i = 0; i < 1000 && file_size > 0; i++)
-        {
-          int32_t db = FROM_LE32(dbl->addresses[i]);
-          if (db < 0)
-            break;
+  //         // Déverrouiller le bloc source
+  //         unlock_block(fd, db * 4096);
+  //       }
+  //     }
+  //     else
+  //     {
+  //       for (int i = 0; i < 1000 && file_size > 0; i++)
+  //       {
+  //         int32_t db = FROM_LE32(dbl->addresses[i]);
+  //         if (db < 0)
+  //           break;
 
-          // Verrouiller le bloc source
-          if (lock_block(fd, db * 4096, F_RDLCK) < 0)
-          {
-            print_error("Erreur lors du verrouillage du bloc source");
-            close_fs(fd, map, size);
-            close(fd2);
-            return 1;
-          }
+  //         // Verrouiller le bloc source
+  //         if (lock_block(fd, db * 4096, F_RDLCK) < 0)
+  //         {
+  //           print_error("Erreur lors du verrouillage du bloc source");
+  //           close_fs(fd, map, size);
+  //           close(fd2);
+  //           return 1;
+  //         }
 
-          struct address_block *sib = get_address_block(map, db);
-          for (int j = 0; j < 1000 && file_size > 0; j++)
-          {
-            int32_t db2 = FROM_LE32(sib->addresses[j]);
-            if (db2 < 0)
-              break;
+  //         struct address_block *sib = get_address_block(map, db);
+  //         for (int j = 0; j < 1000 && file_size > 0; j++)
+  //         {
+  //           int32_t db2 = FROM_LE32(sib->addresses[j]);
+  //           if (db2 < 0)
+  //             break;
 
-            // Verrouiller le bloc source
-            if (lock_block(fd, db2 * 4096, F_RDLCK) < 0)
-            {
-              print_error("Erreur lors du verrouillage du bloc source");
-              unlock_block(fd, db * 4096);
-              close_fs(fd, map, size);
-              close(fd2);
-              return 1;
-            }
+  //           // Verrouiller le bloc source
+  //           if (lock_block(fd, db2 * 4096, F_RDLCK) < 0)
+  //           {
+  //             print_error("Erreur lors du verrouillage du bloc source");
+  //             unlock_block(fd, db * 4096);
+  //             close_fs(fd, map, size);
+  //             close(fd2);
+  //             return 1;
+  //           }
 
-            struct data_block *data_position3 = get_data_block(map, db2);
-            uint32_t buffer = file_size < 4000 ? file_size : 4000;
-            int written = write(fd2, data_position3->data, buffer);
-            if (written == -1)
-            {
-              print_error("write: erreur d'écriture");
-              unlock_block(fd, db2 * 4096);
-              unlock_block(fd, db * 4096);
-              close_fs(fd, map, size);
-              close(fd2);
-              return 1;
-            }
-            file_size -= buffer;
+  //           struct data_block *data_position3 = get_data_block(map, db2);
+  //           uint32_t buffer = file_size < 4000 ? file_size : 4000;
+  //           int written = write(fd2, data_position3->data, buffer);
+  //           if (written == -1)
+  //           {
+  //             print_error("write: erreur d'écriture");
+  //             unlock_block(fd, db2 * 4096);
+  //             unlock_block(fd, db * 4096);
+  //             close_fs(fd, map, size);
+  //             close(fd2);
+  //             return 1;
+  //           }
+  //           file_size -= buffer;
 
-            // Déverrouiller le bloc source
-            unlock_block(fd, db2 * 4096);
-          }
+  //           // Déverrouiller le bloc source
+  //           unlock_block(fd, db2 * 4096);
+  //         }
 
-          // Déverrouiller le bloc source
-          unlock_block(fd, db * 4096);
-        }
-      }
-    }
-    close(fd2);
-  }
-  else // Si le premier fichier est externe et le second interne
-  {
-    int fd2 = open(filename1, O_RDONLY);
-    if (fd2 < 0)
-    {
-      print_error("open: erreur d'ouverture du fichier externe");
-      close_fs(fd, map, size);
-      return 1;
-    }
-    struct inode *in = find_inode(map, nb1, nbi, filename2);
-    if (!in)
-    {
-      int status = create_file(map, filename2);
-      if (status == -1)
-      {
-        close_fs(fd, map, size);
-        close(fd2);
-        return 1;
-      }
-      in = find_inode(map, nb1, nbi, filename2);
-    }
-    else
-    {
-      dealloc_data_block(in, map);
-    }
-    uint32_t total = 0;
-    char buf[4000];
-    size_t r;
-    while ((r = read(fd2, buf, 4000)) > 0)
-    {
-      int32_t b = get_last_data_block_null(map, in);
-      if (b == -2)
-      {
-        print_error("Erreur: pas de blocs de données libres disponibles");
-        break;
-      }
+  //         // Déverrouiller le bloc source
+  //         unlock_block(fd, db * 4096);
+  //       }
+  //     }
+  //   }
+  //   close(fd2);
+  // }
+  // else // Si le premier fichier est externe et le second interne
+  // {
+  //   int fd2 = open(filename1, O_RDONLY);
+  //   if (fd2 < 0)
+  //   {
+  //     print_error("open: erreur d'ouverture du fichier externe");
+  //     close_fs(fd, map, size);
+  //     return 1;
+  //   }
+  //   struct inode *in = find_inode(map, nb1, nbi, filename2);
+  //   if (!in)
+  //   {
+  //     int status = create_file(map, filename2);
+  //     if (status == -1)
+  //     {
+  //       close_fs(fd, map, size);
+  //       close(fd2);
+  //       return 1;
+  //     }
+  //     in = find_inode(map, nb1, nbi, filename2);
+  //   }
+  //   else
+  //   {
+  //     dealloc_data_block(in, map);
+  //   }
+  //   uint32_t total = 0;
+  //   char buf[4000];
+  //   size_t r;
+  //   while ((r = read(fd2, buf, 4000)) > 0)
+  //   {
+  //     int32_t b = get_last_data_block_null(map, in);
+  //     if (b == -2)
+  //     {
+  //       print_error("Erreur: pas de blocs de données libres disponibles");
+  //       break;
+  //     }
 
-      // Verrouiller le bloc destination
-      if (lock_block(fd, b * 4096, F_WRLCK) < 0)
-      {
-        print_error("Erreur lors du verrouillage du bloc destination");
-        close_fs(fd, map, size);
-        close(fd2);
-        return 1;
-      }
+  //     // Verrouiller le bloc destination
+  //     if (lock_block(fd, b * 4096, F_WRLCK) < 0)
+  //     {
+  //       print_error("Erreur lors du verrouillage du bloc destination");
+  //       close_fs(fd, map, size);
+  //       close(fd2);
+  //       return 1;
+  //     }
 
-      struct data_block *db = get_data_block(map, b);
-      memset(db->data, 0, sizeof(db->data));
-      memcpy(db->data, buf, r);
-      calcul_sha1(db->data, 4000, db->sha1);
-      db->type = TO_LE32(5);
-      total += r;
-      in->file_size = TO_LE32(total);
+  //     struct data_block *db = get_data_block(map, b);
+  //     memset(db->data, 0, sizeof(db->data));
+  //     memcpy(db->data, buf, r);
+  //     calcul_sha1(db->data, 4000, db->sha1);
+  //     db->type = TO_LE32(5);
+  //     total += r;
+  //     in->file_size = TO_LE32(total);
 
-      // Déverrouiller le bloc destination
-      unlock_block(fd, b * 4096);
-    }
-    in->file_size = TO_LE32(total);
-    in->modification_time = TO_LE32(time(NULL));
-    calcul_sha1(in, 4000, in->sha1);
-    close(fd2);
-  }
+  //     // Déverrouiller le bloc destination
+  //     unlock_block(fd, b * 4096);
+  //   }
+  //   in->file_size = TO_LE32(total);
+  //   in->modification_time = TO_LE32(time(NULL));
+  //   calcul_sha1(in, 4000, in->sha1);
+  //   close(fd2);
+  // }
   close_fs(fd, map, size);
   return 0;
 }
@@ -1675,13 +1673,8 @@ int cmd_grep(const char *fsname, const char *pattern)
   return 0;
 }
 
-int cmd_mkdir(const char *fsname, const char *path)
+int cmd_mkdir(const char *fsname, char *path)
 {
-  if (path == NULL || strlen(path) == 0)
-  {
-    return print_error("Erreur: Le chemin spécifié est vide.");
-  }
-
   uint8_t *map;
   size_t size;
   int fd = open_fs(fsname, &map, &size);
@@ -1697,8 +1690,7 @@ int cmd_mkdir(const char *fsname, const char *path)
 
   if (strlen(parent_path) == 0)
   {
-    int status = create_directory_racine(map, path);
-
+    int status = create_directory_main(map, path, 0);
     if (status == -1)
     {
       close_fs(fd, map, size);
@@ -1708,78 +1700,12 @@ int cmd_mkdir(const char *fsname, const char *path)
     return 0;
   }
 
-  char *token;
-  char temp_path[256];
-  strncpy(temp_path, parent_path, sizeof(temp_path) - 1);
-  temp_path[sizeof(temp_path) - 1] = '\0';
-  struct inode *parent_inode = NULL;
-
-  token = strtok(temp_path, "/");
-  while (token != NULL)
-  {
-    parent_inode = find_inode(map, nb1, nbi, token);
-    if (!parent_inode || !(FROM_LE32(parent_inode->flags) & (1 << 5)))
-    {
-      close_fs(fd, map, size);
-      return print_error("Un des répertoires parents est introuvable ou non valide");
-    }
-    token = strtok(NULL, "/");
-  }
-
-  // Vérifier si le répertoire existe déjà
-  struct inode *exist_inode = find_inode(map, nb1, nbi, path);
-  if (exist_inode)
+  int val = create_directory(map, path);
+  if (val == -1)
   {
     close_fs(fd, map, size);
-    return print_error("Le répertoire existe déjà");
+    return print_error("Erreur lors de la création du répertoire");
   }
-
-  // Allouer un nouvel inode pour le répertoire
-  int32_t free_inode_idx = -1;
-  for (int i = 0; i < nbi; i++)
-  {
-    struct inode *in = get_inode(map, 1 + nb1, i);
-    if (!(FROM_LE32(in->flags) & 1)) // Trouver un inode libre
-    {
-      free_inode_idx = i;
-      break;
-    }
-  }
-  if (free_inode_idx < 0)
-  {
-    close_fs(fd, map, size);
-    return print_error("Aucun inode libre disponible");
-  }
-
-  struct inode *new_inode = get_inode(map, 1 + nb1, free_inode_idx);
-  init_inode(new_inode, dir_name, true);                                   // Initialiser comme répertoire
-  strncpy(new_inode->filename, dir_name, sizeof(new_inode->filename) - 1); // Stocker le nom dans l'inode
-  new_inode->filename[sizeof(new_inode->filename) - 1] = '\0';             // S'assurer que le nom est terminé
-  new_inode->padding[0] = 0;
-  bitmap_alloc(map, 1 + nb1 + free_inode_idx);
-  increment_nb_f(map);
-
-  // Ajouter une référence vers l'inode du sous-dossier dans les direct_blocks du parent
-  bool added = false;
-  for (int i = 0; i < 900; i++)
-  {
-    if (parent_inode->direct_blocks[i] == -1)
-    {
-      parent_inode->direct_blocks[i] = TO_LE32(free_inode_idx); // Stocker l'index de l'inode du sous-dossier
-      added = true;
-      break;
-    }
-  }
-
-  if (!added)
-  {
-    close_fs(fd, map, size);
-    return print_error("Erreur: Pas d'espace disponible dans les direct_blocks du répertoire parent");
-  }
-
-  // Mettre à jour le répertoire parent
-  parent_inode->modification_time = TO_LE32(time(NULL));
-  calcul_sha1(parent_inode, 4000, parent_inode->sha1);
 
   close_fs(fd, map, size);
   return 0;
@@ -1803,57 +1729,32 @@ int cmd_rmdir(const char *fsname, const char *path)
   char parent_path[256], dir_name[256];
   split_path(path, parent_path, dir_name);
 
-  struct inode *target_inode = find_inode(map, nb1, nbi, dir_name);
+
+
+  struct inode *target_inode = find_inode_folder(map, nb1, nbi, parent_path);
   if (!target_inode || !(FROM_LE32(target_inode->flags) & (1 << 5)))
   {
     close_fs(fd, map, size);
     return print_error("Répertoire introuvable ou non valide.");
   }
 
+  struct inode *dir_inode = NULL;
+  int val = -1;
+  for (int i = 0; i < 900; i++)
+  {
+    dir_inode = get_inode(map, 1+nb1, FROM_LE32(target_inode->direct_blocks[i]));
+    if (dir_inode && strcmp(dir_inode->filename, dir_name) == 0 && (FROM_LE32(dir_inode->flags) & (1 << 5))){
+      val = i;
+      break;
+    }
+  }
+
   // Supprimer tous les enfants du répertoire cible
-  delete_children(target_inode, map);
+  delete_children(dir_inode, map);
 
-  if (target_inode->padding[0] == 1)
-  {
-    // Cas racine : on supprime aussi la racine elle-même
-    delete_inode(target_inode, map);
-    close_fs(fd, map, size);
-    return 0;
-  }
-  else
-  {
-    // Cas non racine : retrouver le parent via les tokens
-    char temp_path[256];
-    strncpy(temp_path, parent_path, sizeof(temp_path) - 1);
-    temp_path[sizeof(temp_path) - 1] = '\0';
-    struct inode *parent_inode = NULL;
-    char *token = strtok(temp_path, "/");
-    while (token != NULL)
-    {
-      parent_inode = find_inode(map, nb1, nbi, token);
-      if (!parent_inode || !(FROM_LE32(parent_inode->flags) & (1 << 5)))
-      {
-        close_fs(fd, map, size);
-        return print_error("Répertoire parent introuvable ou non valide.");
-      }
-      token = strtok(NULL, "/");
-    }
-
-    // Supprimer la référence dans le parent
-    for (int i = 0; i < 900; i++)
-    {
-      if (parent_inode->direct_blocks[i] == TO_LE32(target_inode - get_inode(map, 1 + nb1, 0)))
-      {
-        parent_inode->direct_blocks[i] = TO_LE32(-1);
-        break;
-      }
-    }
-    parent_inode->modification_time = TO_LE32(time(NULL));
-    calcul_sha1(parent_inode, 4000, parent_inode->sha1);
-
-    // Supprimer l'inode du répertoire
-    delete_inode(target_inode, map);
-  }
+  target_inode->direct_blocks[val] = TO_LE32(-1);
+  target_inode->modification_time = TO_LE32(time(NULL));
+  calcul_sha1(target_inode, 4000, target_inode->sha1);
 
   close_fs(fd, map, size);
   return 0;

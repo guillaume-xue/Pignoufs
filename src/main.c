@@ -105,7 +105,7 @@ int main(int argc, char *argv[])
   }
   else if (strcmp(command, "cp") == 0)
   {
-    bool mode1 = false, mode2 = false;
+    bool mode1 = false, mode2 = false, directory = false;
     if (argc < 4)
     {
       fprintf(stderr, "Erreur : la commande 'cp' nécessite au moins 3 arguments.\n");
@@ -128,7 +128,19 @@ int main(int argc, char *argv[])
       fprintf(stderr, "Erreur: Les deux fichiers ne peuvent pas être externes.\n");
       return 1;
     }
-    return cmd_cp(fsname, filename1, filename2, mode1, mode2);
+    if (argc > 4)
+    {
+      if (strcmp(argv[4], "-r") == 0)
+      {
+        directory = true;
+      }
+      else
+      {
+        fprintf(stderr, "Erreur: L'option est inconnue.\n");
+        return 1;
+      }
+    }
+    return cmd_cp(fsname, filename1, filename2, mode1, mode2, directory);
   }
   else if (strcmp(command, "rm") == 0)
   {
@@ -318,6 +330,11 @@ int main(int argc, char *argv[])
       return 1;
     }
     path += 2; // Ignorer les deux premiers caractères
+    if (strlen(path) == 0)
+    {
+      fprintf(stderr, "Erreur: Le nom de répertoire ne peut pas être vide.\n");
+      return 1;
+    }
     return cmd_mkdir(fsname, path);
   }
   else if (strcmp(command, "rmdir") == 0)

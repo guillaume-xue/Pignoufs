@@ -50,7 +50,8 @@ struct inode
   char extensions[120];          // Zone pour extensions (optionnelle)
   uint8_t sha1[20];              // SHA1 du contenu
   uint32_t type;                 // Type du bloc (3 pour inode, little-endian)
-  char padding[72];              // Padding
+  int32_t profondeur;            // Profondeur de l'arborescence
+  char padding[68];              // Padding
 };
 
 struct data_block

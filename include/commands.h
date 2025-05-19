@@ -8,7 +8,7 @@ int cmd_mkfs(const char *fsname, int nbi, int nba);
 int cmd_ls(const char *fsname, const char *filename);
 int cmd_tree(const char *fsname, const char *path);
 int cmd_df(const char *fsname);
-int cmd_cp(const char *fsname, const char *filename1, const char *filename2, bool mode1, bool mode2);
+int cmd_cp(const char *fsname, const char *filename1, const char *filename2, bool mode1, bool mode2, bool directory);
 int cmd_rm(const char *fsname, const char *filename);
 int cmd_lock(const char *fsname, const char *filename, const char *arg);
 int cmd_chmod(const char *fsname, const char *filename, const char *arg);
