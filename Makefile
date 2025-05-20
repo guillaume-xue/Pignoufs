@@ -8,11 +8,18 @@ BIN_DIR = bin
 SOURCES = $(wildcard $(SRC_DIR)/*.c)
 OBJECTS = $(SOURCES:$(SRC_DIR)/%.c=$(BIN_DIR)/%.o)
 
-# Define executables and their dependencies
+# Executables
 EXECUTABLES = $(BIN_DIR)/pignoufs_mmap_sha1 $(BIN_DIR)/pignoufs_corrupt $(BIN_DIR)/pignoufs
 PIGNOUFS_MMAP_SHA1_DEPS = $(BIN_DIR)/mmap_sha1.o
 PIGNOUFS_CORRUPT_DEPS = $(BIN_DIR)/corrupt.o
 PIGNOUFS_DEPS = $(BIN_DIR)/main.o $(BIN_DIR)/commands.o $(BIN_DIR)/sha1.o
+
+# Tests
+TEST_DIR = test
+TEST_BIN = $(TEST_DIR)/main_test
+TEST_SOURCES = $(TEST_DIR)/main_test.c src/commands.c src/sha1.c
+TEST_INCLUDES = -Iinclude -I$(TEST_DIR)
+TEST_LDFLAGS = $(LDFLAGS)
 
 all: $(EXECUTABLES) links
 
@@ -55,8 +62,16 @@ $(BIN_DIR)/commands.o: $(SRC_DIR)/commands.c | $(BIN_DIR)
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
 
+# Compilation du binaire de test
+test: $(TEST_BIN)
+	./$(TEST_BIN)
+
+$(TEST_BIN): $(TEST_SOURCES)
+	$(CC) $(CFLAGS) $(TEST_INCLUDES) $^ -o $@ $(TEST_LDFLAGS)
+
 clean:
 	rm -rf $(BIN_DIR)
-	rm -f mkfs ls df cp rm lock chmod cat input add addinput fsck mount find grep mkdir rmdir tree
+	rm -f mkfs ls df cp rm lock chmod cat input add addinput fsck mount find grep mkdir rmdir tree mv
+	rm -f $(TEST_BIN) test_fs test_fs.img
 
-.PHONY: all clean links
+.PHONY: all clean links test
