@@ -16,6 +16,24 @@ static void fatal_error(const char *msg)
   exit(EXIT_FAILURE);
 }
 
+static void print_ls(struct inode *in)
+{
+  char perm[5] = {'-', '-', '-', '-', '\0'};
+  perm[0] = (in->flags & (1 << 1)) ? 'r' : '-';
+  perm[1] = (in->flags & (1 << 2)) ? 'w' : '-';
+  perm[2] = (in->flags & (1 << 3)) ? 'l' : '-';
+  perm[3] = (in->flags & (1 << 4)) ? 'l' : '-';
+  time_t mod_time = (time_t)in->modification_time;
+  struct tm tm_buf;
+  struct tm *tm = localtime_r(&mod_time, &tm_buf);
+  char buf[20] = "unknown time";
+  if (tm)
+  {
+    strftime(buf, sizeof buf, "%Y-%m-%d %H:%M", tm);
+  }
+  printf("%s %10u %s %s%s\n", perm, in->file_size, buf, in->filename, (((FROM_LE32(in->flags) >> 5) & 1) ? "/" : ""));
+}
+
 static void split_path(const char *path, char *parent_path, char *dir_name)
 {
   const char *last_slash = strrchr(path, '/');

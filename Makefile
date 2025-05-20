@@ -57,6 +57,6 @@ $(BIN_DIR):
 
 clean:
 	rm -rf $(BIN_DIR)
-	rm -f mkfs ls df cp rm lock chmod cat input add addinput fsck mount find grep mkdir rmdir tree
+	rm -f mkfs ls df cp rm lock chmod cat input add addinput fsck mount find grep mkdir rmdir tree mv
 
 .PHONY: all clean links

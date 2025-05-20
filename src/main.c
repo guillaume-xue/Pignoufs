@@ -72,32 +72,39 @@ int main(int argc, char *argv[])
   else if (strcmp(command, "ls") == 0)
   {
     const char *filename = NULL;
+    const char *argument = NULL;
+    if(argc > 3)
+    {
+      argument = argv[3];
+      if (strcmp(argument, "-l") != 0)
+      {
+        fprintf(stderr, "Erreur: L'argument doit être '-r'.\n");
+        return 1;
+      }
+    }
     if (argc > 2)
     {
-      filename = argv[2];
-      if (strncmp(filename, "//", 2) != 0)
+      if (strncmp(argv[2], "-l", 2) == 0)
+      {
+        argument = argv[2];
+      }
+      else if(strncmp(argv[2], "//", 2) == 0)
+      {
+        filename = argv[2];
+        filename += 2; // Ignorer les deux premiers caractères
+      }
+      else
       {
         fprintf(stderr, "Erreur: Le nom de fichier interne doit commencer par \"//\".\n");
         return 1;
       }
-      filename += 2; // Ignorer les deux premiers caractères
     }
-    return cmd_ls(fsname, filename);
+    
+    return cmd_ls(fsname, filename, argument);
   }
   else if (strcmp(command, "tree") == 0)
   {
-    const char *filename = NULL;
-    if (argc > 2)
-    {
-      filename = argv[2];
-      if (strncmp(filename, "//", 2) != 0)
-      {
-        fprintf(stderr, "Erreur: Le nom de fichier interne doit commencer par \"//\".\n");
-        return 1;
-      }
-      filename += 2; // Ignorer les deux premiers caractères
-    }
-    return cmd_tree(fsname, filename);
+    return cmd_tree(fsname);
   }
   else if (strcmp(command, "df") == 0)
   {
