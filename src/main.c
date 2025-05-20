@@ -172,6 +172,11 @@ int main(int argc, char *argv[])
       return 1;
     }
     filename += 2;
+    if (filename[strlen(filename) - 1] == '/')
+    {
+      fprintf(stderr, "Erreur: Le nom de fichier ne doit pas se terminer par '/'.\n");
+      return 1;
+    }
     const char *arg = argv[3];
     if (strcmp(arg, "r") == 0 || strcmp(arg, "w") == 0)
     {
@@ -197,6 +202,11 @@ int main(int argc, char *argv[])
       return 1;
     }
     filename += 2;
+    if (filename[strlen(filename) - 1] == '/')
+    {
+      fprintf(stderr, "Erreur: Le nom de fichier ne doit pas se terminer par '/'.\n");
+      return 1;
+    }
     const char *arg = argv[3];
     if (strcmp(arg, "+r") == 0 || strcmp(arg, "-r") == 0 || strcmp(arg, "+w") == 0 || strcmp(arg, "-w") == 0)
     {
@@ -222,6 +232,11 @@ int main(int argc, char *argv[])
       return 1;
     }
     filename += 2;
+    if (filename[strlen(filename) - 1] == '/')
+    {
+      fprintf(stderr, "Erreur: Le nom de fichier ne doit pas se terminer par '/'.\n");
+      return 1;
+    }
     return cmd_cat(fsname, filename);
   }
   else if (strcmp(command, "input") == 0)
@@ -238,6 +253,11 @@ int main(int argc, char *argv[])
       return 1;
     }
     filename += 2;
+    if (filename[strlen(filename) - 1] == '/')
+    {
+      fprintf(stderr, "Erreur: Le nom de fichier ne doit pas se terminer par '/'.\n");
+      return 1;
+    }
     return cmd_input(fsname, filename);
   }
   else if (strcmp(command, "add") == 0)
@@ -258,8 +278,13 @@ int main(int argc, char *argv[])
       fprintf(stderr, "Erreur: Le nom de fichier interne doit commencer par \"//\".\n");
       return 1;
     }
-    argv[3] += 2;
     const char *filename_int = argv[3];
+    filename_int += 2; // Ignorer les deux premiers caractères
+    if (filename_int[strlen(filename_int) - 1] == '/')
+    {
+      fprintf(stderr, "Erreur: Le nom de fichier ne doit pas se terminer par '/'.\n");
+      return 1;
+    }
     return cmd_add(fsname, filename_ext, filename_int);
   }
   else if (strcmp(command, "addinput") == 0)
@@ -275,16 +300,22 @@ int main(int argc, char *argv[])
       fprintf(stderr, "Erreur: Le nom de fichier interne doit commencer par \"//\".\n");
       return 1;
     }
+    filename += 2; // Ignorer les deux premiers caractères
+    if (filename[strlen(filename) - 1] == '/')
+    {
+      fprintf(stderr, "Erreur: Le nom de fichier ne doit pas se terminer par '/'.\n");
+      return 1;
+    }
     return cmd_addinput(fsname, filename);
   }
   else if (strcmp(command, "fsck") == 0)
   {
     return cmd_fsck(fsname);
   }
-  else if (strcmp(command, "mount") == 0)
-  {
-    return cmd_mount(argc, argv);
-  }
+  // else if (strcmp(command, "mount") == 0)
+  // {
+  //   return cmd_mount(argc, argv);
+  // }
   else if (strcmp(command, "find") == 0)
   {
     const char *type = NULL, *name = NULL, *date_type = NULL;

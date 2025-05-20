@@ -30,8 +30,8 @@ static void split_path(const char *path, char *parent_path, char *dir_name)
   else
   {
     // Pas de slash dans le chemin, le répertoire parent est vide
-    parent_path[0] = '\0';
     strncpy(dir_name, path, 255);
+    parent_path[0] = '\0';
     dir_name[255] = '\0';
   }
 }
@@ -50,9 +50,9 @@ static struct bitmap_block *get_bitmap_block(uint8_t *map, int32_t b)
   check_sha1(bb->bits, 4000, bb->sha1);
   return bb;
 }
-static struct inode *get_inode(uint8_t *map, int32_t base, int i)
+static struct inode *get_inode(uint8_t *map, int32_t b)
 {
-  struct inode *in = (struct inode *)(map + (int64_t)(base + i) * 4096);
+  struct inode *in = (struct inode *)(map + (int64_t)(b) * 4096);
   check_sha1(in, 4000, in->sha1);
   return in;
 }
@@ -142,7 +142,7 @@ static void init_inode(struct inode *in, const char *name, bool type)
 }
 
 // Ouverture du système de fichiers et projection en mémoire
-static int open_fs(const char *fsname, uint8_t **mapp, size_t *sizep)
+static int open_fs(const char *fsname, uint8_t **map, size_t *size)
 {
   int fd = open(fsname, O_RDWR);
   if (fd < 0)
@@ -156,9 +156,9 @@ static int open_fs(const char *fsname, uint8_t **mapp, size_t *sizep)
     close(fd);
     return -1;
   }
-  *sizep = st.st_size;
-  *mapp = mmap(NULL, st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-  if (*mapp == MAP_FAILED)
+  *size = st.st_size;
+  *map = mmap(NULL, st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  if (map == MAP_FAILED)
   {
     print_error("mmap: erreur");
     close(fd);
@@ -171,7 +171,11 @@ static int open_fs(const char *fsname, uint8_t **mapp, size_t *sizep)
 static void close_fs(int fd, uint8_t *map, size_t size)
 {
   msync(map, size, MS_SYNC);
-  munmap(map, size);
+  int er = munmap(map, size);
+  if (er < 0)
+  {
+    print_error("munmap: erreur");
+  }
   close(fd);
 }
 
@@ -185,76 +189,102 @@ static void bitmap_alloc(uint8_t *map, int32_t blknum)
   bb->type = TO_LE32(2);
 }
 
-static struct inode *find_inode(uint8_t *map, int32_t nb1, int32_t nbi, const char *name)
+static int find_inode_racine(uint8_t *map, int32_t nb1, int32_t nbi, const char *name, bool type)
 {
-  struct inode *researched = NULL;
+  int val = -1;
   for (int i = 0; i < nbi; i++)
   {
-    struct inode *in = get_inode(map, 1 + nb1, i);
-    if (FROM_LE32(in->flags) & 1)
+    struct inode *in = get_inode(map, 1 + nb1 + i);
+    if ((FROM_LE32(in->flags) & 1) && ((FROM_LE32(in->flags) >> 5) & 1) == type && FROM_LE32(in->profondeur) == 0 && strcmp(in->filename, name) == 0)
     {
-      if (strcmp(in->filename, name) == 0)
-        return in;
+      return 1 + nb1 + i;
     }
   }
-  return researched;
+  return val;
 }
 
-static struct inode *find_inode_folder(uint8_t *map, int32_t nb1, int32_t nbi, const char *name)
+static int find_file_folder_from_inode(uint8_t *map, struct inode *in, const char *name, bool type)
+{
+  int val = -1;
+  for (int i = 0; i < 900; i++)
+  {
+    if (in->direct_blocks[i] != -1)
+    {
+      struct inode *child_inode = get_inode(map, FROM_LE32(in->direct_blocks[i]));
+      if ((FROM_LE32(child_inode->flags) & 1) && strcmp(child_inode->filename, name) == 0 && ((FROM_LE32(child_inode->flags) >> 5) & 1) == type)
+      {
+        return FROM_LE32(in->direct_blocks[i]);
+      }
+    }
+  }
+  return val;
+}
+
+static int find_inode_folder(uint8_t *map, int32_t nb1, int32_t nbi, const char *name)
 {
   int cpt = 0;
-  char *token = strtok(name, "/");
-  int val = -1;
+  char tmp[256];
+  strncpy(tmp, name, sizeof(tmp));
+  tmp[sizeof(tmp)-1] = '\0';
+  char *token = strtok(tmp, "/");
   struct inode *parent = NULL;
-  struct inode *in = NULL;
+  int val = -1;
   
   while (token != NULL)
   {
     if (parent == NULL)
     {
-      parent = find_inode(map, nb1, nbi, token);
-    }else{
-      for(int i = 0; i < 900; i++)
+      val = find_inode_racine(map, nb1, nbi, token, true);
+      if (val == -1)
       {
-        if (parent->direct_blocks[i] != -1)
-        {
-          in = get_inode(map, 1 + nb1, FROM_LE32(parent->direct_blocks[i]));
-          if (FROM_LE32(in->flags) & 1)
-          {
-            if (strcmp(in->filename, token) == 0 &&  
-                ((FROM_LE32(in->flags) & (1 << 5)) == 1) && in->profondeur == cpt)
-            {
-              val = FROM_LE32(parent->direct_blocks[i]);
-              break;
-            }
-          }
-        }
+        return val;
       }
-      parent = in;
+      parent = get_inode(map, val);
+    }else{
+      val = find_file_folder_from_inode(map, parent, token, true);
+      if (val == -1)
+      {
+        print_error("Erreur: le répertoire n'existe pas");
+        return -1;
+      }
+      parent = get_inode(map, val);
     }
     cpt++;
     token = strtok(NULL, "/");
-  }
-
-  return parent;
-
+  } 
+  return val;
 }
 
-static int32_t find_node_pos(uint8_t *map, const char *name, bool type, int profondeur)
+static void add_inode(struct inode *in, int val)
 {
-  int32_t nb1, nbi, nba, nbb;
-  get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
-  for (int i = 0; i < nbi; i++)
+  for (int i = 0; i < 900; i++)
   {
-    struct inode *in = get_inode(map, 1 + nb1, i);
-    if (FROM_LE32(in->flags) & 1)
+    if ((int)FROM_LE32(in->direct_blocks[i]) == -1)
     {
-      if (strcmp(in->filename, name) == 0 &&  
-          ((type == 0 && (FROM_LE32(in->flags) & (1 << 5)) == type)) && in->profondeur == profondeur)
-        return 1 + nb1 + i;
+      in->direct_blocks[i] = TO_LE32(val);
+      break;
+    }
+    if(i == 899)
+    {
+      fatal_error("Erreur: pas de place pour ajouter un inode");
+      return;
     }
   }
-  return -1;
+  in->modification_time = TO_LE32(time(NULL));
+  calcul_sha1(in, 4000, in->sha1);
+}
+
+static void delete_separte_inode(struct inode *in, int val){
+  for (int i = 0; i < 900; i++)
+  {
+    if ((int)FROM_LE32(in->direct_blocks[i]) == val)
+    {
+      in->direct_blocks[i] = TO_LE32(-1);
+      break;
+    }
+  }
+  in->modification_time = TO_LE32(time(NULL));
+  calcul_sha1(in, 4000, in->sha1);
 }
 
 static int32_t alloc_data_block(uint8_t *map)
@@ -312,7 +342,7 @@ static void dealloc_data_block(struct inode *in, uint8_t *map)
       for (int i = 0; i < 1000; i++)
       {
         if (dbl->addresses[i] < 0)
-          break;
+          continue;
         struct data_block *db = get_data_block(map, dbl->addresses[i]);
         db->type = TO_LE32(4);
         calcul_sha1(db->data, 4000, db->sha1);
@@ -331,7 +361,7 @@ static void dealloc_data_block(struct inode *in, uint8_t *map)
         for (int j = 0; j < 1000; j++)
         {
           if ((int32_t)FROM_LE32(sib->addresses[j]) < 0)
-            break;
+            continue;
           struct data_block *db = get_data_block(map, sib->addresses[j]);
           db->type = TO_LE32(4);
           calcul_sha1(db->data, 4000, db->sha1);
@@ -357,22 +387,9 @@ static void dealloc_data_block(struct inode *in, uint8_t *map)
   calcul_sha1(in, 4000, in->sha1);
 }
 
-static void delete_inode(struct inode *in, uint8_t *map)
+static void delete_inode(struct inode *in, uint8_t *map, int pos)
 {
   dealloc_data_block(in, map);
-  int32_t pos = NULL;
-  if(in->flags & (1 << 5))
-  {
-    pos = find_node_pos(map, in->filename, true, in->profondeur);
-  }else{
-    pos = find_node_pos(map, in->filename, false, in->profondeur);
-  }
-
-  if (pos == -1)
-  {
-    fprintf(stderr, "Erreur: inode introuvable\n");
-    return;
-  }
   in->flags = TO_LE32(0);
   in->file_size = TO_LE32(0);
   in->creation_time = TO_LE32(0);
@@ -395,33 +412,27 @@ static int create_file(uint8_t *map, const char *filename)
   // Scan inodes
   for (int i = 0; i < nbi; i++)
   {
-    struct inode *in = get_inode(map, 1 + nb1, i);
-    if (FROM_LE32(in->flags) & 1)
-    {
-      if (strcmp(in->filename, filename) == 0)
-      {
-        in->modification_time = time(NULL);
-        calcul_sha1(in, 4000, in->sha1);
-        return 0;
-      }
-    }
-    else if (free_idx < 0)
+    struct inode *in = get_inode(map, 1 + nb1 + i);
+    if (!(FROM_LE32(in->flags) & 1))
     {
       free_idx = i;
+      break;
     }
   }
   if (free_idx < 0)
   {
-    return print_error("touch: aucun inode libre disponible");
+    fatal_error("create_file: aucun inode libre disponible");
   }
   // Initialiser l'inode et l'allouer dans le bitmap
-  struct inode *in = get_inode(map, 1 + nb1, free_idx);
-  init_inode(in, filename, false);
   int32_t inode_blk = 1 + nb1 + free_idx;
+  struct inode *in = get_inode(map, inode_blk);
+  init_inode(in, filename, false);
   bitmap_alloc(map, inode_blk);
+  calcul_sha1(in, 4000, in->sha1);
+  in->profondeur = TO_LE32(0); // Racine
   // Mettre à jour les compteurs du superbloc et son SHA1
   increment_nb_f(map);
-  return 0;
+  return inode_blk; // Renvoie l'index de l'inode
 }
 
 static int create_directory_main(uint8_t *map, const char *dirname, int profondeur)
@@ -429,43 +440,29 @@ static int create_directory_main(uint8_t *map, const char *dirname, int profonde
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
   int32_t free_idx = -1;
-
   // Scan inodes
   for (int i = 0; i < nbi; i++)
   {
-    struct inode *in = get_inode(map, 1 + nb1, i);
-    if (FROM_LE32(in->flags) & 1)
+    struct inode *in = get_inode(map, 1 + nb1 + i);
+    if (!(FROM_LE32(in->flags) & 1))
     {
-      if(FROM_LE32(in->flags) & (1 << 5) && FROM_LE32(in->profondeur) == profondeur){
-        // Si le répertoire existe déjà, on met à jour son temps de modification
-        if (strcmp(in->filename, dirname) == 0)
-        {
-          in->modification_time = time(NULL);
-          calcul_sha1(in, 4000, in->sha1);
-          return i; // Renvoie l'index de l'inode
-        }
-      }
-    }
-    else if (free_idx < 0)
-    {
-      free_idx = i; 
+      free_idx = i;
+      break;
     }
   }
   if (free_idx < 0)
   {
     fatal_error("mkdir: aucun inode libre disponible");
   }
-  // Initialiser l'inode comme répertoire et l'allouer dans le bitmap
-  struct inode *in = get_inode(map, 1 + nb1, free_idx);
-  init_inode(in, dirname, true); // true = répertoire
-  in->profondeur = TO_LE32(profondeur);           // Racine
   int32_t inode_blk = 1 + nb1 + free_idx;
+  // Initialiser l'inode comme répertoire et l'allouer dans le bitmap
+  struct inode *in = get_inode(map, inode_blk);
+  init_inode(in, dirname, true); // true = répertoire
+  in->profondeur = TO_LE32(profondeur); // Racine
   bitmap_alloc(map, inode_blk);
-
   calcul_sha1(in, 4000, in->sha1);
-
   increment_nb_f(map);
-  return free_idx; // Renvoie l'index de l'inode
+  return inode_blk; // Renvoie l'index de l'inode
 }
 
 static int create_directory(uint8_t *map, char *dirname)
@@ -482,22 +479,32 @@ static int create_directory(uint8_t *map, char *dirname)
   {
     if (parent == NULL)
     {
-      val = create_directory_main(map, token, cpt);
-      parent = get_inode(map, 1 + nb1, val);
+      val = find_inode_racine(map, nb1, nbi, token, true);
+      if (val == -1)
+        val = create_directory_main(map, token, cpt);
+      parent = get_inode(map, val);
     }else{
-      val = create_directory_main(map, token, cpt);
-      in = get_inode(map, 1 + nb1, val);
+      val = -1;
       for(int i = 0; i < 900; i++)
       {
-        if (parent->direct_blocks[i] == -1)
+        if (parent->direct_blocks[i] >= 0)
         {
-          parent->direct_blocks[i] = TO_LE32(val);
-          break;
+          in = get_inode(map,FROM_LE32(parent->direct_blocks[i]));
+          if (strcmp(in->filename, token) == 0 && (FROM_LE32(in->flags >> 5) & 1))
+          {
+            val = FROM_LE32(parent->direct_blocks[i]);
+            parent = in;
+            break;
+          }
         }
       }
-      parent->modification_time = TO_LE32(time(NULL));
-      calcul_sha1(parent, 4000, parent->sha1);
-      parent = in;
+      if (val == -1)
+      {
+        val = create_directory_main(map, token, cpt);
+        in = get_inode(map, val);
+        add_inode(parent, val);
+        parent = in;
+      }
     }
     cpt++;
     token = strtok(NULL, "/");
@@ -515,17 +522,18 @@ void delete_children(struct inode *dir, uint8_t *map)
     int32_t child_idx = FROM_LE32(dir->direct_blocks[i]);
     if (child_idx == -1)
       continue;
-    struct inode *child = get_inode(map, 1 + nb1, child_idx);
-    if ((FROM_LE32(child->flags) & (1 << 5)))
+    struct inode *child = get_inode(map, child_idx);
+    if ((FROM_LE32(child->flags) >> 5) & 1)
     {
       // Si c'est un sous-répertoire, suppression récursive
       delete_children(child, map);
     }
-    delete_inode(child, map);
+    delete_inode(child, map, child_idx);
     dir->direct_blocks[i] = TO_LE32(-1);
   }
   calcul_sha1(dir, 4000, dir->sha1);
 }
+
 
 // On récupère le dernier bloc écrit
 static int32_t get_last_data_block(uint8_t *map, struct inode *in)
@@ -573,11 +581,13 @@ static int32_t get_last_data_block_null(uint8_t *map, struct inode *in)
       struct address_block *dbl = get_address_block(map, dbl_blk);
       memset(dbl->addresses, -1, sizeof(dbl->addresses));
       calcul_sha1(dbl->addresses, 4000, dbl->sha1);
+      calcul_sha1(in, 4000, in->sha1);
       dbl->type = TO_LE32(6);
       goto rec1;
     }
     int32_t dbl_blk = alloc_data_block(map);
     in->direct_blocks[last_index] = TO_LE32(dbl_blk);
+    calcul_sha1(in, 4000, in->sha1);
     return dbl_blk;
   }
   else
@@ -597,6 +607,7 @@ static int32_t get_last_data_block_null(uint8_t *map, struct inode *in)
         dbl2->type = TO_LE32(7);
         dbl2->addresses[0] = save;
         calcul_sha1(dbl2->addresses, 4000, dbl2->sha1);
+        calcul_sha1(in, 4000, in->sha1);
         dbl = dbl2;
         goto rec2;
       }
@@ -604,6 +615,7 @@ static int32_t get_last_data_block_null(uint8_t *map, struct inode *in)
       {
         int32_t dbl_blk = alloc_data_block(map);
         dbl->addresses[last_index] = TO_LE32(dbl_blk);
+        calcul_sha1(dbl->addresses, 4000, dbl->sha1);
       }
       return FROM_LE32(dbl->addresses[last_index]);
     }
@@ -619,6 +631,7 @@ static int32_t get_last_data_block_null(uint8_t *map, struct inode *in)
         struct address_block *dbl2 = get_address_block(map, dbl_blk);
         memset(dbl2->addresses, -1, sizeof(dbl2->addresses));
         calcul_sha1(dbl2->addresses, 4000, dbl2->sha1);
+        calcul_sha1(dbl, 4000, dbl->sha1);
         dbl2->type = TO_LE32(6);
       }
 
@@ -627,6 +640,7 @@ static int32_t get_last_data_block_null(uint8_t *map, struct inode *in)
       {
         int32_t dbl_blk = alloc_data_block(map);
         sib->addresses[inner] = TO_LE32(dbl_blk);
+        calcul_sha1(sib->addresses, 4000, sib->sha1);
       }
       return FROM_LE32(sib->addresses[inner]);
     }
@@ -655,6 +669,21 @@ static int unlock_block(int fd, int64_t block_offset)
   return fcntl(fd, F_SETLK, &fl);
 }
 
+static bool is_folder_path(const char* parent, const char* child)
+{
+  if(strlen(parent) > 0 && strlen(child) > 0)
+  {
+    return false; //fichier
+  }else if(strlen(parent) > 0 && strlen(child) == 0)
+  {
+    return true; //dossier
+  }else if(strlen(parent) == 0 && strlen(child) > 0)
+  {
+    return false; //fichier
+  }else{ // strlen(parent) == 0 && strlen(child) == 0
+    return true; //dossier
+  }
+}
 
 
 #endif
