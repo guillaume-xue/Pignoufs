@@ -399,6 +399,11 @@ int main(int argc, char *argv[])
       return 1;
     }
     oldpath += 2; // Ignorer les deux premiers caractères
+    if(strlen(oldpath) == 0)
+    {
+      fprintf(stderr, "Erreur: Le nom de répertoire/fichier ne peut pas être vide.\n");
+      return 1;
+    }
     newpath += 2; // Ignorer les deux premiers caractères
     return cmd_mv(fsname, oldpath, newpath);
   }
