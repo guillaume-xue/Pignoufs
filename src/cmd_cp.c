@@ -380,7 +380,8 @@ int cmd_cp(const char *fsname, const char *filename1, const char *filename2, boo
 
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
-  bool is_dir, is_dir2;
+  bool is_dir = false;
+  bool is_dir2 = false;
   char parent_path[256], dir_name[256];
   char parent_path2[256], dir_name2[256];
   int val = -1;
