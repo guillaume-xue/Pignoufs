@@ -73,7 +73,7 @@ int main(int argc, char *argv[])
   {
     const char *filename = NULL;
     const char *argument = NULL;
-    if(argc > 3)
+    if (argc > 3)
     {
       argument = argv[3];
       if (strcmp(argument, "-l") != 0)
@@ -88,7 +88,7 @@ int main(int argc, char *argv[])
       {
         argument = argv[2];
       }
-      else if(strncmp(argv[2], "//", 2) == 0)
+      else if (strncmp(argv[2], "//", 2) == 0)
       {
         filename = argv[2];
         filename += 2; // Ignorer les deux premiers caractères
@@ -99,7 +99,7 @@ int main(int argc, char *argv[])
         return 1;
       }
     }
-    
+
     return cmd_ls(fsname, filename, argument);
   }
   else if (strcmp(command, "tree") == 0)
@@ -112,7 +112,7 @@ int main(int argc, char *argv[])
   }
   else if (strcmp(command, "cp") == 0)
   {
-    bool mode1 = false, mode2 = false, directory = false;
+    bool mode1 = false, mode2 = false;
     if (argc < 4)
     {
       fprintf(stderr, "Erreur : la commande 'cp' nécessite au moins 3 arguments.\n");
@@ -122,12 +122,22 @@ int main(int argc, char *argv[])
     if (strncmp(filename1, "//", 2) == 0)
     {
       filename1 += 2;
+      if (strlen(filename1) == 0)
+      {
+        fprintf(stderr, "Erreur: Le nom de fichier interne ne peut pas être vide.\n");
+        return 1;
+      }
       mode1 = true;
     }
     const char *filename2 = argv[3];
     if (strncmp(filename2, "//", 2) == 0)
     {
       filename2 += 2;
+      if (strlen(filename2) == 0)
+      {
+        fprintf(stderr, "Erreur: Le nom de fichier interne ne peut pas être vide.\n");
+        return 1;
+      }
       mode2 = true;
     }
     if (!mode1 && !mode2)
@@ -135,19 +145,7 @@ int main(int argc, char *argv[])
       fprintf(stderr, "Erreur: Les deux fichiers ne peuvent pas être externes.\n");
       return 1;
     }
-    if (argc > 4)
-    {
-      if (strcmp(argv[4], "-r") == 0)
-      {
-        directory = true;
-      }
-      else
-      {
-        fprintf(stderr, "Erreur: L'option est inconnue.\n");
-        return 1;
-      }
-    }
-    return cmd_cp(fsname, filename1, filename2, mode1, mode2, directory);
+    return cmd_cp(fsname, filename1, filename2, mode1, mode2);
   }
   else if (strcmp(command, "rm") == 0)
   {
@@ -406,7 +404,7 @@ int main(int argc, char *argv[])
       return 1;
     }
     oldpath += 2; // Ignorer les deux premiers caractères
-    if(strlen(oldpath) == 0)
+    if (strlen(oldpath) == 0)
     {
       fprintf(stderr, "Erreur: Le nom de répertoire/fichier ne peut pas être vide.\n");
       return 1;

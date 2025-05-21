@@ -3,6 +3,8 @@
 
 #include "structures.h"
 #include "sha1.h"
+#include <errno.h>
+#include <dirent.h>
 
 // Gestion centralisée des erreurs
 static int print_error(const char *msg)
@@ -53,7 +55,6 @@ static void split_path(const char *path, char *parent_path, char *dir_name)
     dir_name[255] = '\0';
   }
 }
-
 
 // Helpers pour accéder aux blocs
 static struct pignoufs *get_superblock(uint8_t *map)
@@ -243,11 +244,11 @@ static int find_inode_folder(uint8_t *map, int32_t nb1, int32_t nbi, const char 
   int cpt = 0;
   char tmp[256];
   strncpy(tmp, name, sizeof(tmp));
-  tmp[sizeof(tmp)-1] = '\0';
+  tmp[sizeof(tmp) - 1] = '\0';
   char *token = strtok(tmp, "/");
   struct inode *parent = NULL;
   int val = -1;
-  
+
   while (token != NULL)
   {
     if (parent == NULL)
@@ -258,7 +259,9 @@ static int find_inode_folder(uint8_t *map, int32_t nb1, int32_t nbi, const char 
         return val;
       }
       parent = get_inode(map, val);
-    }else{
+    }
+    else
+    {
       val = find_file_folder_from_inode(map, parent, token, true);
       if (val == -1)
       {
@@ -269,7 +272,7 @@ static int find_inode_folder(uint8_t *map, int32_t nb1, int32_t nbi, const char 
     }
     cpt++;
     token = strtok(NULL, "/");
-  } 
+  }
   return val;
 }
 
@@ -282,7 +285,7 @@ static void add_inode(struct inode *in, int val)
       in->direct_blocks[i] = TO_LE32(val);
       break;
     }
-    if(i == 899)
+    if (i == 899)
     {
       fatal_error("Erreur: pas de place pour ajouter un inode");
       return;
@@ -292,7 +295,8 @@ static void add_inode(struct inode *in, int val)
   calcul_sha1(in, 4000, in->sha1);
 }
 
-static void delete_separte_inode(struct inode *in, int val){
+static void delete_separte_inode(struct inode *in, int val)
+{
   for (int i = 0; i < 900; i++)
   {
     if ((int)FROM_LE32(in->direct_blocks[i]) == val)
@@ -475,7 +479,7 @@ static int create_directory_main(uint8_t *map, const char *dirname, int profonde
   int32_t inode_blk = 1 + nb1 + free_idx;
   // Initialiser l'inode comme répertoire et l'allouer dans le bitmap
   struct inode *in = get_inode(map, inode_blk);
-  init_inode(in, dirname, true); // true = répertoire
+  init_inode(in, dirname, true);        // true = répertoire
   in->profondeur = TO_LE32(profondeur); // Racine
   bitmap_alloc(map, inode_blk);
   calcul_sha1(in, 4000, in->sha1);
@@ -501,13 +505,15 @@ static int create_directory(uint8_t *map, char *dirname)
       if (val == -1)
         val = create_directory_main(map, token, cpt);
       parent = get_inode(map, val);
-    }else{
+    }
+    else
+    {
       val = -1;
-      for(int i = 0; i < 900; i++)
+      for (int i = 0; i < 900; i++)
       {
         if (parent->direct_blocks[i] >= 0)
         {
-          in = get_inode(map,FROM_LE32(parent->direct_blocks[i]));
+          in = get_inode(map, FROM_LE32(parent->direct_blocks[i]));
           if (strcmp(in->filename, token) == 0 && (FROM_LE32(in->flags >> 5) & 1))
           {
             val = FROM_LE32(parent->direct_blocks[i]);
@@ -527,7 +533,7 @@ static int create_directory(uint8_t *map, char *dirname)
     cpt++;
     token = strtok(NULL, "/");
   }
-  
+
   return val; // Renvoie l'index de l'inode
 }
 
@@ -551,7 +557,6 @@ void delete_children(struct inode *dir, uint8_t *map)
   }
   calcul_sha1(dir, 4000, dir->sha1);
 }
-
 
 // On récupère le dernier bloc écrit
 static int32_t get_last_data_block(uint8_t *map, struct inode *in)
@@ -687,21 +692,355 @@ static int unlock_block(int fd, int64_t block_offset)
   return fcntl(fd, F_SETLK, &fl);
 }
 
-static bool is_folder_path(const char* parent, const char* child)
+static bool is_folder_path(const char *parent, const char *child)
 {
-  if(strlen(parent) > 0 && strlen(child) > 0)
+  if (strlen(parent) > 0 && strlen(child) > 0)
   {
-    return false; //fichier
-  }else if(strlen(parent) > 0 && strlen(child) == 0)
+    return false; // fichier
+  }
+  else if (strlen(parent) > 0 && strlen(child) == 0)
   {
-    return true; //dossier
-  }else if(strlen(parent) == 0 && strlen(child) > 0)
+    return true; // dossier
+  }
+  else if (strlen(parent) == 0 && strlen(child) > 0)
   {
-    return false; //fichier
-  }else{ // strlen(parent) == 0 && strlen(child) == 0
-    return true; //dossier
+    return false; // fichier
+  }
+  else
+  {              // strlen(parent) == 0 && strlen(child) == 0
+    return true; // dossier
   }
 }
 
+static void copy_interne(uint8_t *map, struct inode *in, struct inode *in2)
+{
+  for (int i = 0; i < 900; i++)
+  {
+    if (in->direct_blocks[i] != -1)
+    {
+      struct data_block *data_position = get_data_block(map, in->direct_blocks[i]);
+      int32_t new_block = alloc_data_block(map);
+      struct data_block *new_data_position = get_data_block(map, new_block);
+      memcpy(new_data_position->data, data_position->data, 4000);
+      in2->direct_blocks[i] = TO_LE32(new_block);
+      calcul_sha1(new_data_position->data, 4000, new_data_position->sha1);
+    }
+  }
+  if ((int32_t)FROM_LE32(in->double_indirect_block) != -1)
+  {
+    struct address_block *dbl = get_address_block(map, FROM_LE32(in->double_indirect_block));
+    if ((int32_t)FROM_LE32(dbl->type) == 6)
+    {
+      in2->double_indirect_block = TO_LE32(alloc_data_block(map));
+      struct address_block *dbl2 = get_address_block(map, FROM_LE32(in2->double_indirect_block));
+      memset(dbl2->addresses, -1, sizeof(dbl2->addresses));
+      calcul_sha1(dbl2->addresses, 4000, dbl2->sha1);
+      calcul_sha1(in2, 4000, in2->sha1);
+      dbl2->type = TO_LE32(6);
+      for (int i = 0; i < 1000; i++)
+      {
+        if (dbl->addresses[i] != -1)
+        {
+          struct data_block *data_position = get_data_block(map, dbl->addresses[i]);
+          int32_t new_block = alloc_data_block(map);
+          struct data_block *new_data_position = get_data_block(map, new_block);
+          memcpy(new_data_position->data, data_position->data, 4000);
+          dbl2->addresses[i] = TO_LE32(new_block);
+          calcul_sha1(new_data_position->data, 4000, new_data_position->sha1);
+        }
+      }
+      calcul_sha1(dbl2->addresses, 4000, dbl2->sha1);
+    }
+    else
+    {
+      in2->double_indirect_block = TO_LE32(alloc_data_block(map));
+      struct address_block *dbl2 = get_address_block(map, FROM_LE32(in2->double_indirect_block));
+      memset(dbl2->addresses, -1, sizeof(dbl2->addresses));
+      calcul_sha1(in2, 4000, in2->sha1);
+      dbl2->type = TO_LE32(7);
 
+      for (int i = 0; i < 1000; i++)
+      {
+        if (dbl->addresses[i] != -1)
+        {
+          struct address_block *sib = get_address_block(map, FROM_LE32(dbl->addresses[i]));
+          int32_t new_block = alloc_data_block(map);
+          struct address_block *dbl3 = get_address_block(map, new_block);
+          memset(dbl3->addresses, -1, sizeof(dbl3->addresses));
+
+          dbl3->type = TO_LE32(6);
+          for (int j = 0; j < 1000; j++)
+          {
+            if (sib->addresses[j] != -1)
+            {
+              struct data_block *data_position = get_data_block(map, sib->addresses[j]);
+              int32_t new_block = alloc_data_block(map);
+              struct data_block *new_data_position = get_data_block(map, new_block);
+              memcpy(new_data_position->data, data_position->data, 4000);
+              dbl3->addresses[j] = TO_LE32(new_block);
+              calcul_sha1(new_data_position->data, 4000, new_data_position->sha1);
+            }
+          }
+          dbl2->addresses[i] = TO_LE32(new_block);
+          calcul_sha1(dbl3->addresses, 4000, dbl3->sha1);
+        }
+      }
+      calcul_sha1(dbl2->addresses, 4000, dbl2->sha1);
+    }
+  }
+}
+
+static void copy_interne_main(uint8_t *map, struct inode *in, struct inode *in2)
+{
+  int32_t new_block = alloc_data_block(map);
+  struct inode *dossier = get_inode(map, new_block);
+  dossier->profondeur = TO_LE32(FROM_LE32(in2->profondeur) + 1);
+  init_inode(dossier, in->filename, true);
+  copy_interne(map, in, dossier);
+  add_inode(in2, new_block);
+  calcul_sha1(dossier, 4000, dossier->sha1);
+}
+
+static void copy_dossier(uint8_t *map, struct inode *in, struct inode *in2)
+{
+  for (int i = 0; i < 900; i++)
+  {
+    if (in->direct_blocks[i] != -1)
+    {
+      struct inode *dossier = get_inode(map, in->direct_blocks[i]);
+      if ((FROM_LE32(dossier->flags) >> 5) & 1)
+      {
+        int32_t new_block = alloc_data_block(map);
+        struct inode *dossier2 = get_inode(map, new_block);
+        dossier2->profondeur = TO_LE32(FROM_LE32(in2->profondeur) + 1);
+        init_inode(dossier2, dossier->filename, true);
+        copy_dossier(map, dossier, dossier2);
+        add_inode(in2, new_block);
+        calcul_sha1(dossier2, 4000, dossier2->sha1);
+      }
+      else
+      {
+        struct inode *fichier = get_inode(map, in->direct_blocks[i]);
+        int32_t new_block = alloc_data_block(map);
+        init_inode(fichier, dossier->filename, false);
+        struct inode *fichier2 = get_inode(map, new_block);
+        fichier2->profondeur = TO_LE32(FROM_LE32(in2->profondeur) + 1);
+        init_inode(fichier2, fichier->filename, false);
+        copy_interne(map, fichier, fichier2);
+        add_inode(in2, new_block);
+        calcul_sha1(fichier2, 4000, fichier2->sha1);
+      }
+    }
+  }
+}
+
+static void copy_dossier_main(uint8_t *map, struct inode *in, struct inode *in2)
+{
+  int32_t new_block = alloc_data_block(map);
+  struct inode *dossier = get_inode(map, new_block);
+  dossier->profondeur = TO_LE32(FROM_LE32(in2->profondeur) + 1);
+  init_inode(dossier, in->filename, true);
+  copy_dossier(map, in, dossier);
+  add_inode(in2, new_block);
+  calcul_sha1(dossier, 4000, dossier->sha1);
+}
+
+static void copy_fichier_vers_externe(uint8_t *map, struct inode *in, const char *filename)
+{
+  int fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+  if (fd < 0)
+  {
+    perror("Erreur d'ouverture du fichier externe");
+    return;
+  }
+
+  uint32_t file_size = FROM_LE32(in->file_size);
+  uint32_t bytes_written = 0;
+
+  // Copier les blocs directs
+  for (int i = 0; i < 900 && bytes_written < file_size; i++)
+  {
+    int32_t blk = FROM_LE32(in->direct_blocks[i]);
+    if (blk == -1)
+      break;
+    struct data_block *db = get_data_block(map, blk);
+    uint32_t to_write = (file_size - bytes_written > 4000) ? 4000 : (file_size - bytes_written);
+    if (write(fd, db->data, to_write) != to_write)
+    {
+      perror("Erreur d'écriture dans le fichier externe");
+      close(fd);
+      return;
+    }
+    bytes_written += to_write;
+  }
+
+  // Copier les blocs indirects/double indirects si besoin
+  if (bytes_written < file_size && (int32_t)FROM_LE32(in->double_indirect_block) != -1)
+  {
+    struct address_block *dbl = get_address_block(map, FROM_LE32(in->double_indirect_block));
+    if (FROM_LE32(dbl->type) == 6)
+    {
+      // Simple indirect
+      for (int i = 0; i < 1000 && bytes_written < file_size; i++)
+      {
+        int32_t blk = FROM_LE32(dbl->addresses[i]);
+        if (blk == -1)
+          break;
+        struct data_block *db = get_data_block(map, blk);
+        uint32_t to_write = (file_size - bytes_written > 4000) ? 4000 : (file_size - bytes_written);
+        if (write(fd, db->data, to_write) != to_write)
+        {
+          perror("Erreur d'écriture dans le fichier externe");
+          close(fd);
+          return;
+        }
+        bytes_written += to_write;
+      }
+    }
+    else
+    {
+      // Double indirect
+      for (int i = 0; i < 1000 && bytes_written < file_size; i++)
+      {
+        int32_t sib_blk = FROM_LE32(dbl->addresses[i]);
+        if (sib_blk == -1)
+          break;
+        struct address_block *sib = get_address_block(map, sib_blk);
+        for (int j = 0; j < 1000 && bytes_written < file_size; j++)
+        {
+          int32_t blk = FROM_LE32(sib->addresses[j]);
+          if (blk == -1)
+            break;
+          struct data_block *db = get_data_block(map, blk);
+          uint32_t to_write = (file_size - bytes_written > 4000) ? 4000 : (file_size - bytes_written);
+          if (write(fd, db->data, to_write) != to_write)
+          {
+            perror("Erreur d'écriture dans le fichier externe");
+            close(fd);
+            return;
+          }
+          bytes_written += to_write;
+        }
+      }
+    }
+  }
+  close(fd);
+}
+
+static void copy_dossier_vers_externe(uint8_t *map, struct inode *in, const char *dirname)
+{
+  // Créer le dossier externe
+  if (mkdir(dirname, 0755) < 0 && errno != EEXIST)
+  {
+    perror("Erreur lors de la création du dossier externe");
+    return;
+  }
+
+  char path[512];
+  for (int i = 0; i < 900; i++)
+  {
+    int32_t child_idx = FROM_LE32(in->direct_blocks[i]);
+    if (child_idx == -1)
+      continue;
+    struct inode *child = get_inode(map, child_idx);
+
+    snprintf(path, sizeof(path), "%s/%s", dirname, child->filename);
+
+    if (((FROM_LE32(child->flags) >> 5) & 1))
+    {
+      // C'est un dossier
+      copy_dossier_vers_externe(map, child, path);
+    }
+    else
+    {
+      // C'est un fichier
+      copy_fichier_vers_externe(map, child, path);
+    }
+  }
+}
+
+static void copy_fichier_vers_interne(uint8_t *map, struct inode *in, const char *filename)
+{
+  int fd = open(filename, O_RDONLY);
+  if (fd < 0)
+  {
+    perror("Erreur d'ouverture du fichier externe");
+    return;
+  }
+
+  char buf[4000];
+  size_t r;
+  uint32_t total = 0;
+
+  while ((r = read(fd, buf, 4000)) > 0)
+  {
+    int32_t b = get_last_data_block_null(map, in);
+    if (b == -2)
+    {
+      print_error("Erreur: pas de blocs de données libres disponibles");
+      break;
+    }
+
+    struct data_block *db = get_data_block(map, b);
+    memset(db->data, 0, sizeof(db->data));
+    memcpy(db->data, buf, r);
+    calcul_sha1(db->data, 4000, db->sha1);
+    db->type = TO_LE32(5);
+    total += r;
+    in->file_size = TO_LE32(total);
+  }
+  in->modification_time = TO_LE32(time(NULL));
+  calcul_sha1(in, 4000, in->sha1);
+
+  close(fd);
+}
+
+static void copy_dossier_vers_interne(uint8_t *map, struct inode *in, const char *dirname)
+{
+  DIR *dir = opendir(dirname);
+  if (!dir)
+  {
+    perror("Erreur d'ouverture du dossier externe");
+    return;
+  }
+
+  struct dirent *entry;
+  char path[512];
+  while ((entry = readdir(dir)) != NULL)
+  {
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+      continue;
+
+    snprintf(path, sizeof(path), "%s/%s", dirname, entry->d_name);
+
+    struct stat st;
+    if (stat(path, &st) < 0)
+    {
+      perror("Erreur stat");
+      continue;
+    }
+
+    if (S_ISDIR(st.st_mode))
+    {
+      // Créer un inode dossier dans le FS interne
+      int32_t new_blk = alloc_data_block(map);
+      struct inode *new_dir = get_inode(map, new_blk);
+      init_inode(new_dir, entry->d_name, true);
+      new_dir->profondeur = TO_LE32(FROM_LE32(in->profondeur) + 1);
+      add_inode(in, new_blk);
+      copy_dossier_vers_interne(map, new_dir, path);
+    }
+    else if (S_ISREG(st.st_mode))
+    {
+      // Créer un inode fichier dans le FS interne
+      int32_t new_blk = alloc_data_block(map);
+      struct inode *new_file = get_inode(map, new_blk);
+      init_inode(new_file, entry->d_name, false);
+      new_file->profondeur = TO_LE32(FROM_LE32(in->profondeur) + 1);
+      add_inode(in, new_blk);
+      copy_fichier_vers_interne(map, new_file, path);
+    }
+  }
+  closedir(dir);
+}
 #endif
