@@ -15,7 +15,5 @@ int main(int argc, char *argv[])
     return 1;
   }
 
-  commands(argc, argv);
-
-  return 0;
+  return commands(argc, argv);
 }

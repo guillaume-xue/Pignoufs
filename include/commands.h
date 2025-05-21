@@ -22,6 +22,6 @@
 #include "../include/cmd_rmdir.h"
 #include "../include/cmd_tree.h"
 
-void commands(int argc, char *argv[]);
+int commands(int argc, char *argv[]);
 
 #endif
