@@ -400,7 +400,7 @@ void dealloc_data_block(struct inode *in, uint8_t *map, int fd, size_t size)
           struct data_block *db = get_data_block(map, db3);
           db->type = TO_LE32(4);
           calcul_sha1(db->data, 4000, db->sha1);
-          bitmap_dealloc(map, sib->addresses[j]);
+          bitmap_dealloc(map, db3);
           sib->addresses[j] = TO_LE32(-1);
           incremente_lbl(map);
           unlock_block(fd, db3 * 4096);
@@ -441,6 +441,7 @@ void delete_inode(struct inode *in, uint8_t *map, int pos, int fd, size_t size)
   calcul_sha1(in, 4000, in->sha1);
 }
 
+// Crée un fichier et retourne l'index de l'inode nouvellement créé
 int create_file(uint8_t *map, const char *filename)
 {
   int32_t nb1, nbi, nba, nbb;
@@ -473,6 +474,7 @@ int create_file(uint8_t *map, const char *filename)
   return inode_blk; // Renvoie l'index de l'inode
 }
 
+// Crée un inode répertoire à une profondeur donnée
 int create_directory_main(uint8_t *map, const char *dirname, int profondeur)
 {
   int32_t nb1, nbi, nba, nbb;
@@ -503,6 +505,7 @@ int create_directory_main(uint8_t *map, const char *dirname, int profondeur)
   return inode_blk; // Renvoie l'index de l'inode
 }
 
+// Crée un répertoire (et ses parents si besoin) à partir d'un chemin
 int create_directory(uint8_t *map, char *dirname)
 {
   char *token = NULL;
@@ -529,9 +532,11 @@ int create_directory(uint8_t *map, char *dirname)
       val = -1;
       for (int i = 0; i < 900; i++)
       {
+        // Vérifie que le bloc est valide
         if (parent->direct_blocks[i] >= 0)
         {
           in = get_inode(map, FROM_LE32(parent->direct_blocks[i]));
+          // Vérifie que le nom correspond et que c'est bien un dossier
           if (strcmp(in->filename, token) == 0 && (FROM_LE32(in->flags >> 5) & 1))
           {
             val = FROM_LE32(parent->direct_blocks[i]);
@@ -542,6 +547,7 @@ int create_directory(uint8_t *map, char *dirname)
       }
       if (val == -1)
       {
+        // Crée le dossier si non trouvé
         val = create_directory_main(map, token, cpt);
         in = get_inode(map, val);
         add_inode(parent, val);
@@ -555,7 +561,7 @@ int create_directory(uint8_t *map, char *dirname)
   return val; // Renvoie l'index de l'inode
 }
 
-// On récupère le dernier bloc écrit
+// Récupère le dernier bloc de données écrit pour un fichier
 int32_t get_last_data_block(uint8_t *map, struct inode *in)
 {
   uint32_t size = FROM_LE32(in->file_size);
@@ -582,7 +588,7 @@ int32_t get_last_data_block(uint8_t *map, struct inode *in)
   }
 }
 
-// Pour les calculs ont suppose qu'on ait des blocs pleins
+// Récupère le prochain bloc de données libre pour un fichier (ou l'alloue)
 int32_t get_last_data_block_null(uint8_t *map, struct inode *in)
 {
   uint32_t size = FROM_LE32(in->file_size);
@@ -667,7 +673,7 @@ int32_t get_last_data_block_null(uint8_t *map, struct inode *in)
   }
 }
 
-// Verrouiller un bloc pour lecture ou écriture
+// Verrouille un bloc pour lecture ou écriture
 int lock_block(int fd, int64_t block_offset, int lock_type)
 {
   struct flock fl = {0};
@@ -678,7 +684,7 @@ int lock_block(int fd, int64_t block_offset, int lock_type)
   return fcntl(fd, F_SETLKW, &fl);
 }
 
-// Déverrouiller un bloc
+// Déverrouille un bloc
 int unlock_block(int fd, int64_t block_offset)
 {
   struct flock fl = {0};
@@ -689,6 +695,7 @@ int unlock_block(int fd, int64_t block_offset)
   return fcntl(fd, F_SETLK, &fl);
 }
 
+// Détermine si un chemin correspond à un dossier ou un fichier
 bool is_folder_path(const char *parent, const char *child)
 {
   if (strlen(parent) > 0 && strlen(child) > 0)

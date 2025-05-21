@@ -72,6 +72,7 @@ int cmd_ls(const char *fsname, const char *filename, const char *argument)
     {
       if (strlen(parent_path) == 0)
       {
+        // Recherche l'inode à la racine
         val = find_inode_racine(map, nb1, nbi, dir_name, false);
         if (val == -1)
         {
@@ -82,6 +83,7 @@ int cmd_ls(const char *fsname, const char *filename, const char *argument)
       }
       else
       {
+        // Recherche l'inode dans un sous-répertoire
         val = find_inode_folder(map, nb1, nbi, parent_path);
         if (val == -1)
         {
@@ -99,6 +101,15 @@ int cmd_ls(const char *fsname, const char *filename, const char *argument)
       }
     }
 
+    // Vérifie les permissions et les locks :
+    // On n'affiche que si l'inode a le droit de lecture et n'est pas locké en lecture ou écriture
+    if (!((FROM_LE32(in->flags) >> 1) & 1) || ((FROM_LE32(in->flags) >> 3) & 1) || ((FROM_LE32(in->flags) >> 4) & 1))
+    {
+      close_fs(fd, map, size);
+      return print_error("Erreur: pas de droit de lecture ou fichier/dossier verrouillé (lecture/écriture)");
+    }
+
+    // Si c'est un dossier, affiche son contenu
     if (FROM_LE32(in->flags >> 5) & 1)
     {
       for (int i = 0; i < 900; i++)
@@ -125,6 +136,7 @@ int cmd_ls(const char *fsname, const char *filename, const char *argument)
     }
     else
     {
+      // Sinon, affiche le fichier lui-même
       if (argument != NULL)
       {
         if (strcmp(argument, "-l") == 0)

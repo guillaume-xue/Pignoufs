@@ -1,6 +1,7 @@
 #include "../include/structures.h"
 #include "../include/utilitaires.h"
 
+// Suppression récursive des enfants d'un répertoire
 void delete_children(struct inode *dir, uint8_t *map, int fd, size_t size)
 {
   int32_t nb1, nbi, nba, nbb;
@@ -16,6 +17,10 @@ void delete_children(struct inode *dir, uint8_t *map, int fd, size_t size)
       // Si c'est un sous-répertoire, suppression récursive
       delete_children(child, map, fd, size);
     }
+    // Vérifie les permissions et les locks :
+    // On ne supprime que si l'inode a le droit d'écriture et n'est pas locké en lecture ou écriture
+    if (!((FROM_LE32(child->flags) >> 2) & 1) || ((FROM_LE32(child->flags) >> 3) & 1) || ((FROM_LE32(child->flags) >> 4) & 1))
+      continue;
     delete_inode(child, map, child_idx, fd, size);
     dir->direct_blocks[i] = TO_LE32(-1);
   }
@@ -33,7 +38,7 @@ int cmd_rmdir(const char *fsname, const char *path)
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
 
-  // Séparer le chemin parent et le nom du répertoire
+  // Séparer le chemin parent et le nom du répertoire à supprimer
   char parent_path[256], dir_name[256];
   split_path(path, parent_path, dir_name);
 
@@ -52,6 +57,14 @@ boucle:
       return print_error("Erreur: répertoire inexistant");
     }
     in = get_inode(map, val);
+
+    // Vérifie les permissions et les locks sur le dossier à supprimer
+    if (!((FROM_LE32(in->flags) >> 2) & 1) || ((FROM_LE32(in->flags) >> 3) & 1) || ((FROM_LE32(in->flags) >> 4) & 1))
+    {
+      close_fs(fd, map, size);
+      return print_error("Erreur: pas de droit d'écriture ou dossier verrouillé (lecture/écriture)");
+    }
+
     delete_children(in, map, fd, size);
     delete_inode(in, map, val, fd, size);
   }
@@ -71,12 +84,21 @@ boucle:
       return print_error("Erreur: répertoire à supprimer inexistant");
     }
     in2 = get_inode(map, val2);
+
+    // Vérifie les permissions et les locks sur le dossier à supprimer
+    if (!((FROM_LE32(in2->flags) >> 2) & 1) || ((FROM_LE32(in2->flags) >> 3) & 1) || ((FROM_LE32(in2->flags) >> 4) & 1))
+    {
+      close_fs(fd, map, size);
+      return print_error("Erreur: pas de droit d'écriture ou dossier verrouillé (lecture/écriture)");
+    }
+
     delete_children(in2, map, fd, size);
     delete_inode(in2, map, val2, fd, size);
     delete_separte_inode(in, val2);
   }
   else
   {
+    // Cas de chemin complexe, on continue à découper le chemin
     printf("parent_path = %s\n", parent_path);
     printf("dir_name = %s\n", dir_name);
     split_path(parent_path, parent_path, dir_name);

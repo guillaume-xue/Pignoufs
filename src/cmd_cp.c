@@ -457,8 +457,16 @@ int cmd_cp(const char *fsname, const char *filename1, const char *filename2, boo
         in = get_inode(map, val);
       }
     }
+
+    // Vérifie les droits de lecture et que le dossier n'est pas locké en lecture 
+    if (!((FROM_LE32(in->flags) >> 1) & 1) || ((FROM_LE32(in->flags) >> 3) & 1))
+    {
+      close_fs(fd, map, size);
+      return print_error("Erreur: pas de droit de lecture ou dossier verrouillé en lecture");
+    }
     if (is_dir)
     {
+
       copy_dossier_vers_externe(map, in, filename2);
     }
     else

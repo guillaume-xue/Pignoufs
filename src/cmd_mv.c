@@ -20,6 +20,7 @@ int cmd_mv(const char *fsname, const char *oldpath, const char *newpath)
   bool is_dir = false;
   bool is_dir2 = false;
   
+  // Détermine si la source et la destination sont des dossiers
   is_dir = is_folder_path(old_parent_path, old_name);
   is_dir2 = is_folder_path(new_parent_path, new_name);
 
@@ -33,6 +34,7 @@ int cmd_mv(const char *fsname, const char *oldpath, const char *newpath)
   struct inode *new_parent = NULL;
   struct inode *old_parent2 = NULL;
 
+  // Recherche l'inode source (fichier ou dossier à déplacer)
   if (is_dir)
   {
     split_path(old_parent_path, old_parent_path, old_name);
@@ -95,6 +97,7 @@ int cmd_mv(const char *fsname, const char *oldpath, const char *newpath)
     }
   }
 
+  // Recherche la destination et vérifie qu'elle n'existe pas déjà
   if (is_dir2)
   {
     split_path(new_parent_path, new_parent_path, new_name);
@@ -152,6 +155,16 @@ int cmd_mv(const char *fsname, const char *oldpath, const char *newpath)
       }
     }
   }
+
+  // Vérifie les permissions et les locks sur la source :
+  // On ne déplace que si l'inode a le droit d'écriture et n'est pas locké en lecture ou écriture
+  if (!((FROM_LE32(old_parent2->flags) >> 2) & 1) || ((FROM_LE32(old_parent2->flags) >> 3) & 1) || ((FROM_LE32(old_parent2->flags) >> 4) & 1))
+  {
+    close_fs(fd, map, size);
+    return print_error("Erreur: pas de droit d'écriture ou fichier/dossier verrouillé (lecture/écriture)");
+  }
+
+  // Cas renommage dans le même dossier
   if (((!is_dir && !is_dir2) || (is_dir && is_dir2)) && (strcmp(old_parent_path, new_parent_path) == 0)) // rename
   {
     if (strlen(new_name) > 0)
@@ -162,6 +175,7 @@ int cmd_mv(const char *fsname, const char *oldpath, const char *newpath)
     old_parent2->modification_time = TO_LE32(time(NULL));
     calcul_sha1(old_parent2, 4000, old_parent2->sha1);
   }
+  // Cas déplacement dans un autre dossier (même type)
   else if ((!is_dir && !is_dir2) || (is_dir && is_dir2))
   {
     if (strcmp(old_name, new_name) != 0)
@@ -185,6 +199,7 @@ int cmd_mv(const char *fsname, const char *oldpath, const char *newpath)
       delete_separte_inode(old_parent, val1_2);
     }
   }
+  // Cas déplacement fichier vers dossier
   else if (!is_dir && is_dir2)
   {
     if (strlen(new_name) == 0)
@@ -203,6 +218,7 @@ int cmd_mv(const char *fsname, const char *oldpath, const char *newpath)
       delete_separte_inode(old_parent, val1_2);
     }
   }
+  // Cas interdit : déplacement dossier dans fichier
   else
   {
     close_fs(fd, map, size);

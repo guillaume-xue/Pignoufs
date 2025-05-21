@@ -12,7 +12,7 @@ int cmd_rm(const char *fsname, const char *filename)
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
 
-  // Séparer le chemin parent et le nom du répertoire
+  // Séparer le chemin parent et le nom du fichier à supprimer
   char parent_path[256], dir_name[256];
   split_path(filename, parent_path, dir_name);
   bool is_dir = is_folder_path(parent_path, dir_name);
@@ -28,6 +28,7 @@ int cmd_rm(const char *fsname, const char *filename)
 
   if (strlen(parent_path) == 0)
   {
+    // Cas où le fichier est à la racine
     val2 = find_inode_racine(map, nb1, nbi, dir_name, false);
     if (val2 == -1)
     {
@@ -38,6 +39,7 @@ int cmd_rm(const char *fsname, const char *filename)
   }
   else
   {
+    // Cas où le fichier est dans un sous-répertoire
     val = find_inode_folder(map, nb1, nbi, parent_path);
     if (val == -1)
     {
@@ -55,6 +57,15 @@ int cmd_rm(const char *fsname, const char *filename)
     delete_separte_inode(in, val2);
   }
 
+  // Vérifie les permissions et les locks :
+  // On ne supprime que si l'inode a le droit d'écriture et n'est pas locké en lecture ou écriture
+  if (!((FROM_LE32(in2->flags) >> 2) & 1) || ((FROM_LE32(in2->flags) >> 3) & 1) || ((FROM_LE32(in2->flags) >> 4) & 1))
+  {
+    close_fs(fd, map, size);
+    return print_error("Erreur: pas de droit d'écriture ou fichier verrouillé (lecture/écriture)");
+  }
+
+  // Supprime l'inode et libère les blocs associés
   delete_inode(in2, map, val2, fd, size);
 
   close_fs(fd, map, size);

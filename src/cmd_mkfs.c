@@ -81,6 +81,7 @@ int cmd_mkfs(const char *fsname, int nbi, int nba)
   for (int32_t i = 0; i < nbi; i++)
   {
     struct inode *in = get_inode(map, 1 + nb1 + i);
+    // Initialise chaque inode à zéro (libre)
     memset(in, 0, sizeof(*in)); // marquer l'inode comme libre
     calcul_sha1(in, 4000, in->sha1);
     in->type = TO_LE32(3);
@@ -90,11 +91,13 @@ int cmd_mkfs(const char *fsname, int nbi, int nba)
   for (int32_t i = 0; i < nba; i++)
   {
     struct data_block *db = get_data_block(map, 1 + nb1 + nbi + i);
+    // Initialise chaque bloc de données à zéro
     memset(db->data, 0, sizeof(db->data));
     calcul_sha1(db->data, 4000, db->sha1);
     db->type = TO_LE32(4);
   }
 
+  // Synchronise et libère la mémoire mappée
   msync(map, filesize, MS_SYNC);
   int er = munmap(map, filesize);
   if (er < 0)
@@ -105,6 +108,7 @@ int cmd_mkfs(const char *fsname, int nbi, int nba)
   }
   close(fd);
 
+  // Affiche un résumé de la création du système de fichiers
   printf("Système de fichiers %s créé avec %d inodes et %d blocs allouables.\n", fsname, nbi, nba);
   printf("Nombre total de blocs : %d\n", nbb);
   return 0;

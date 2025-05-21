@@ -59,6 +59,16 @@ int cmd_input(const char *fsname, const char *filename)
       }
     }
   }
+
+  // Vérifie les permissions et les locks :
+  // On ne modifie que si l'inode a le droit d'écriture et n'est pas locké en lecture ou écriture
+  if (!((FROM_LE32(in->flags) >> 2) & 1) || ((FROM_LE32(in->flags) >> 3) & 1) || ((FROM_LE32(in->flags) >> 4) & 1))
+  {
+    print_error("Erreur: pas de droit d'écriture ou fichier verrouillé (lecture/écriture)");
+    close_fs(fd, map, size);
+    return 1;
+  }
+
   // Verrouiller l'inode
   int inode_offset = (1 + nb1) * 4096 + (int64_t)(in - (struct inode *)map);
   if (lock_block(fd, inode_offset, F_WRLCK) < 0)
