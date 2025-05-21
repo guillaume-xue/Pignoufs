@@ -18,6 +18,10 @@ PIGNOUFS_MMAP_SHA1_DEPS = $(BIN_DIR)/mmap_sha1.o
 PIGNOUFS_CORRUPT_DEPS = $(BIN_DIR)/corrupt.o
 PIGNOUFS_DEPS = $(addprefix $(BIN_DIR)/, $(MAIN_OBJS))
 
+TEST_BIN = $(BIN_DIR)/test_main
+TEST_SRC = test/test_main.c
+TEST_OBJS = $(filter-out $(BIN_DIR)/main.o, $(PIGNOUFS_DEPS))
+
 all: $(EXECUTABLES) links
 
 $(BIN_DIR)/pignoufs_mmap_sha1: $(PIGNOUFS_MMAP_SHA1_DEPS)
@@ -28,6 +32,12 @@ $(BIN_DIR)/pignoufs_corrupt: $(PIGNOUFS_CORRUPT_DEPS)
 
 $(BIN_DIR)/pignoufs: $(PIGNOUFS_DEPS)
 	$(CC) $^ -o $@ $(LDFLAGS)
+
+$(TEST_BIN): $(TEST_SRC) $(TEST_OBJS)
+	$(CC) $(CFLAGS) $(TEST_SRC) $(TEST_OBJS) -o $@ $(LDFLAGS)
+
+test: $(TEST_BIN)
+	$(TEST_BIN)
 
 links: $(BIN_DIR)/pignoufs
 	ln -sf $(BIN_DIR)/pignoufs mkfs
@@ -61,6 +71,6 @@ $(BIN_DIR):
 
 clean:
 	rm -rf $(BIN_DIR)
-	rm -f mkfs ls df cp rm lock chmod cat input add addinput fsck mount find grep mkdir rmdir tree mv
+	rm -f mkfs ls df cp rm lock chmod cat input add addinput fsck mount find grep mkdir rmdir tree mv *.txt test_*
 
-.PHONY: all clean links
+.PHONY: all clean links test

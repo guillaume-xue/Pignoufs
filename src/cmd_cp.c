@@ -1,27 +1,36 @@
 #include "../include/structures.h"
 #include "../include/utilitaires.h"
 
-static void copy_interne(uint8_t *map, struct inode *in, struct inode *in2)
+static void copy_interne(uint8_t *map, struct inode *in, struct inode *in2, int fd)
 {
   for (int i = 0; i < 900; i++)
   {
     if (in->direct_blocks[i] != -1)
     {
-      struct data_block *data_position = get_data_block(map, in->direct_blocks[i]);
+      int32_t old_blk = FROM_LE32(in->direct_blocks[i]);
+      lock_block(fd, old_blk * 4096, F_RDLCK);
+      struct data_block *data_position = get_data_block(map, old_blk);
       int32_t new_block = alloc_data_block(map);
+      lock_block(fd, new_block * 4096, F_WRLCK);
       struct data_block *new_data_position = get_data_block(map, new_block);
       memcpy(new_data_position->data, data_position->data, 4000);
       in2->direct_blocks[i] = TO_LE32(new_block);
       calcul_sha1(new_data_position->data, 4000, new_data_position->sha1);
+      unlock_block(fd, new_block * 4096);
+      unlock_block(fd, old_blk * 4096);
     }
   }
   if ((int32_t)FROM_LE32(in->double_indirect_block) != -1)
   {
-    struct address_block *dbl = get_address_block(map, FROM_LE32(in->double_indirect_block));
+    int32_t dbl_blk = FROM_LE32(in->double_indirect_block);
+    lock_block(fd, dbl_blk * 4096, F_RDLCK);
+    struct address_block *dbl = get_address_block(map, dbl_blk);
     if ((int32_t)FROM_LE32(dbl->type) == 6)
     {
-      in2->double_indirect_block = TO_LE32(alloc_data_block(map));
-      struct address_block *dbl2 = get_address_block(map, FROM_LE32(in2->double_indirect_block));
+      int32_t new_dbl_blk = alloc_data_block(map);
+      lock_block(fd, new_dbl_blk * 4096, F_WRLCK);
+      in2->double_indirect_block = TO_LE32(new_dbl_blk);
+      struct address_block *dbl2 = get_address_block(map, new_dbl_blk);
       memset(dbl2->addresses, -1, sizeof(dbl2->addresses));
       calcul_sha1(dbl2->addresses, 4000, dbl2->sha1);
       calcul_sha1(in2, 4000, in2->sha1);
@@ -30,20 +39,28 @@ static void copy_interne(uint8_t *map, struct inode *in, struct inode *in2)
       {
         if (dbl->addresses[i] != -1)
         {
-          struct data_block *data_position = get_data_block(map, dbl->addresses[i]);
+          int32_t old_blk = FROM_LE32(dbl->addresses[i]);
+          lock_block(fd, old_blk * 4096, F_RDLCK);
+          struct data_block *data_position = get_data_block(map, old_blk);
           int32_t new_block = alloc_data_block(map);
+          lock_block(fd, new_block * 4096, F_WRLCK);
           struct data_block *new_data_position = get_data_block(map, new_block);
           memcpy(new_data_position->data, data_position->data, 4000);
           dbl2->addresses[i] = TO_LE32(new_block);
           calcul_sha1(new_data_position->data, 4000, new_data_position->sha1);
+          unlock_block(fd, new_block * 4096);
+          unlock_block(fd, old_blk * 4096);
         }
       }
       calcul_sha1(dbl2->addresses, 4000, dbl2->sha1);
+      unlock_block(fd, new_dbl_blk * 4096);
     }
     else
     {
-      in2->double_indirect_block = TO_LE32(alloc_data_block(map));
-      struct address_block *dbl2 = get_address_block(map, FROM_LE32(in2->double_indirect_block));
+      int32_t new_dbl_blk = alloc_data_block(map);
+      lock_block(fd, new_dbl_blk * 4096, F_WRLCK);
+      in2->double_indirect_block = TO_LE32(new_dbl_blk);
+      struct address_block *dbl2 = get_address_block(map, new_dbl_blk);
       memset(dbl2->addresses, -1, sizeof(dbl2->addresses));
       calcul_sha1(in2, 4000, in2->sha1);
       dbl2->type = TO_LE32(7);
@@ -52,8 +69,11 @@ static void copy_interne(uint8_t *map, struct inode *in, struct inode *in2)
       {
         if (dbl->addresses[i] != -1)
         {
-          struct address_block *sib = get_address_block(map, FROM_LE32(dbl->addresses[i]));
+          int32_t sib_blk = FROM_LE32(dbl->addresses[i]);
+          lock_block(fd, sib_blk * 4096, F_RDLCK);
+          struct address_block *sib = get_address_block(map, sib_blk);
           int32_t new_block = alloc_data_block(map);
+          lock_block(fd, new_block * 4096, F_WRLCK);
           struct address_block *dbl3 = get_address_block(map, new_block);
           memset(dbl3->addresses, -1, sizeof(dbl3->addresses));
 
@@ -62,35 +82,46 @@ static void copy_interne(uint8_t *map, struct inode *in, struct inode *in2)
           {
             if (sib->addresses[j] != -1)
             {
-              struct data_block *data_position = get_data_block(map, sib->addresses[j]);
-              int32_t new_block = alloc_data_block(map);
-              struct data_block *new_data_position = get_data_block(map, new_block);
+              int32_t old_blk = FROM_LE32(sib->addresses[j]);
+              lock_block(fd, old_blk * 4096, F_RDLCK);
+              struct data_block *data_position = get_data_block(map, old_blk);
+              int32_t new_data_blk = alloc_data_block(map);
+              lock_block(fd, new_data_blk * 4096, F_WRLCK);
+              struct data_block *new_data_position = get_data_block(map, new_data_blk);
               memcpy(new_data_position->data, data_position->data, 4000);
-              dbl3->addresses[j] = TO_LE32(new_block);
+              dbl3->addresses[j] = TO_LE32(new_data_blk);
               calcul_sha1(new_data_position->data, 4000, new_data_position->sha1);
+              unlock_block(fd, new_data_blk * 4096);
+              unlock_block(fd, old_blk * 4096);
             }
           }
           dbl2->addresses[i] = TO_LE32(new_block);
           calcul_sha1(dbl3->addresses, 4000, dbl3->sha1);
+          unlock_block(fd, new_block * 4096);
+          unlock_block(fd, sib_blk * 4096);
         }
       }
       calcul_sha1(dbl2->addresses, 4000, dbl2->sha1);
+      unlock_block(fd, new_dbl_blk * 4096);
     }
+    unlock_block(fd, dbl_blk * 4096);
   }
 }
 
-static void copy_interne_main(uint8_t *map, struct inode *in, struct inode *in2)
+static void copy_interne_main(uint8_t *map, struct inode *in, struct inode *in2, int fd)
 {
   int32_t new_block = alloc_data_block(map);
+  lock_block(fd, new_block * 4096, F_WRLCK);
   struct inode *dossier = get_inode(map, new_block);
   dossier->profondeur = TO_LE32(FROM_LE32(in2->profondeur) + 1);
   init_inode(dossier, in->filename, true);
-  copy_interne(map, in, dossier);
+  copy_interne(map, in, dossier, fd);
   add_inode(in2, new_block);
   calcul_sha1(dossier, 4000, dossier->sha1);
+  unlock_block(fd, new_block * 4096);
 }
 
-static void copy_dossier(uint8_t *map, struct inode *in, struct inode *in2)
+static void copy_dossier(uint8_t *map, struct inode *in, struct inode *in2, int fd)
 {
   for (int i = 0; i < 900; i++)
   {
@@ -100,38 +131,44 @@ static void copy_dossier(uint8_t *map, struct inode *in, struct inode *in2)
       if ((FROM_LE32(dossier->flags) >> 5) & 1)
       {
         int32_t new_block = alloc_data_block(map);
+        lock_block(fd, new_block * 4096, F_WRLCK);
         struct inode *dossier2 = get_inode(map, new_block);
         dossier2->profondeur = TO_LE32(FROM_LE32(in2->profondeur) + 1);
         init_inode(dossier2, dossier->filename, true);
-        copy_dossier(map, dossier, dossier2);
+        copy_dossier(map, dossier, dossier2, fd);
         add_inode(in2, new_block);
         calcul_sha1(dossier2, 4000, dossier2->sha1);
+        unlock_block(fd, new_block * 4096);
       }
       else
       {
         struct inode *fichier = get_inode(map, in->direct_blocks[i]);
         int32_t new_block = alloc_data_block(map);
+        lock_block(fd, new_block * 4096, F_WRLCK);
         init_inode(fichier, dossier->filename, false);
         struct inode *fichier2 = get_inode(map, new_block);
         fichier2->profondeur = TO_LE32(FROM_LE32(in2->profondeur) + 1);
         init_inode(fichier2, fichier->filename, false);
-        copy_interne(map, fichier, fichier2);
+        copy_interne(map, fichier, fichier2, fd);
         add_inode(in2, new_block);
         calcul_sha1(fichier2, 4000, fichier2->sha1);
+        unlock_block(fd, new_block * 4096);
       }
     }
   }
 }
 
-static void copy_dossier_main(uint8_t *map, struct inode *in, struct inode *in2)
+static void copy_dossier_main(uint8_t *map, struct inode *in, struct inode *in2, int fd)
 {
   int32_t new_block = alloc_data_block(map);
+  lock_block(fd, new_block * 4096, F_WRLCK);
   struct inode *dossier = get_inode(map, new_block);
   dossier->profondeur = TO_LE32(FROM_LE32(in2->profondeur) + 1);
   init_inode(dossier, in->filename, true);
-  copy_dossier(map, in, dossier);
+  copy_dossier(map, in, dossier, fd);
   add_inode(in2, new_block);
   calcul_sha1(dossier, 4000, dossier->sha1);
+  unlock_block(fd, new_block * 4096);
 }
 
 static void copy_fichier_vers_externe(uint8_t *map, struct inode *in, const char *filename)
@@ -582,11 +619,11 @@ int cmd_cp(const char *fsname, const char *filename1, const char *filename2, boo
 
     if (is_dir && is_dir2)
     {
-      copy_dossier_main(map, in, in2);
+      copy_dossier_main(map, in, in2, fd);
     }
     else if (!is_dir && is_dir2)
     {
-      copy_interne_main(map, in, in2);
+      copy_interne_main(map, in, in2, fd);
     }
   }
   return 0;
