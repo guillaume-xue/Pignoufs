@@ -6,13 +6,17 @@ SRC_DIR = src
 BIN_DIR = bin
 
 SOURCES = $(wildcard $(SRC_DIR)/*.c)
-OBJECTS = $(SOURCES:$(SRC_DIR)/%.c=$(BIN_DIR)/%.o)
+INCLUDES = $(wildcard include/*.h)
+
+# Exclure les fichiers avec un main indépendant
+MAIN_OBJS = main.o commands.o sha1.o \
+	cmd_add.o cmd_addinput.o cmd_cat.o cmd_chmod.o cmd_cp.o cmd_df.o cmd_find.o cmd_fsck.o cmd_grep.o cmd_input.o cmd_lock.o cmd_ls.o cmd_mkdir.o cmd_mkfs.o cmd_mv.o cmd_rm.o cmd_rmdir.o cmd_tree.o
 
 # Define executables and their dependencies
 EXECUTABLES = $(BIN_DIR)/pignoufs_mmap_sha1 $(BIN_DIR)/pignoufs_corrupt $(BIN_DIR)/pignoufs
 PIGNOUFS_MMAP_SHA1_DEPS = $(BIN_DIR)/mmap_sha1.o
 PIGNOUFS_CORRUPT_DEPS = $(BIN_DIR)/corrupt.o
-PIGNOUFS_DEPS = $(BIN_DIR)/main.o $(BIN_DIR)/commands.o $(BIN_DIR)/sha1.o
+PIGNOUFS_DEPS = $(addprefix $(BIN_DIR)/, $(MAIN_OBJS))
 
 all: $(EXECUTABLES) links
 
@@ -46,10 +50,10 @@ links: $(BIN_DIR)/pignoufs
 	ln -sf $(BIN_DIR)/pignoufs tree
 	ln -sf $(BIN_DIR)/pignoufs mv
 
-$(BIN_DIR)/%.o: $(SRC_DIR)/%.c | $(BIN_DIR)
+$(BIN_DIR)/%.o: $(SRC_DIR)/%.c $(INCLUDES) | $(BIN_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-$(BIN_DIR)/commands.o: $(SRC_DIR)/commands.c | $(BIN_DIR)
+$(BIN_DIR)/commands.o: $(SRC_DIR)/commands.c $(INCLUDES) | $(BIN_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BIN_DIR):
