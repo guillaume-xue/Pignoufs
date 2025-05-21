@@ -55,7 +55,7 @@ int cmd_input(const char *fsname, const char *filename)
       else
       {
         in = get_inode(map, val);
-        dealloc_data_block(in, map);
+        dealloc_data_block(in, map, fd, size);
       }
     }
   }

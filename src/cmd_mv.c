@@ -17,8 +17,9 @@ int cmd_mv(const char *fsname, const char *oldpath, const char *newpath)
   char new_parent_path[256], new_name[256];
   split_path(oldpath, old_parent_path, old_name);
   split_path(newpath, new_parent_path, new_name);
-  bool is_dir, is_dir2;
-
+  bool is_dir = false;
+  bool is_dir2 = false;
+  
   is_dir = is_folder_path(old_parent_path, old_name);
   is_dir2 = is_folder_path(new_parent_path, new_name);
 
@@ -73,7 +74,7 @@ int cmd_mv(const char *fsname, const char *oldpath, const char *newpath)
         close_fs(fd, map, size);
         return print_error("Erreur: fichier inexistant");
       }
-      old_parent2 = get_inode(map, val1_1); // fichier racine
+      old_parent2 = get_inode(map, val1_2); // fichier racine
     }
     else
     {
@@ -151,7 +152,6 @@ int cmd_mv(const char *fsname, const char *oldpath, const char *newpath)
       }
     }
   }
-
   if (((!is_dir && !is_dir2) || (is_dir && is_dir2)) && (strcmp(old_parent_path, new_parent_path) == 0)) // rename
   {
     if (strlen(new_name) > 0)
@@ -164,17 +164,13 @@ int cmd_mv(const char *fsname, const char *oldpath, const char *newpath)
   }
   else if ((!is_dir && !is_dir2) || (is_dir && is_dir2))
   {
-    if (strlen(new_name) > 0)
+    if (strcmp(old_name, new_name) != 0)
     {
       strncpy(old_parent2->filename, new_name, 255);
       old_parent2->filename[255] = '\0';
     }
-    old_parent2->modification_time = TO_LE32(time(NULL));
-    calcul_sha1(old_parent2, 4000, old_parent2->sha1);
     if (strlen(new_parent_path) == 0)
     {
-      old_parent2->modification_time = TO_LE32(time(NULL));
-      calcul_sha1(old_parent2, 4000, old_parent2->sha1);
       old_parent2->profondeur = TO_LE32(0);
     }
     else
@@ -191,7 +187,7 @@ int cmd_mv(const char *fsname, const char *oldpath, const char *newpath)
   }
   else if (!is_dir && is_dir2)
   {
-    if (strlen(new_parent_path) == 0)
+    if (strlen(new_name) == 0)
     {
       old_parent2->profondeur = TO_LE32(0);
     }

@@ -136,6 +136,7 @@ void init_inode(struct inode *in, const char *name, bool type)
   in->type = TO_LE32(3);
 }
 
+
 // Ouverture du système de fichiers et projection en mémoire
 int open_fs(const char *fsname, uint8_t **map, size_t *size)
 {
@@ -315,22 +316,39 @@ void bitmap_dealloc(uint8_t *map, int32_t blknum)
   calcul_sha1(bb->bits, 4000, bb->sha1);
 }
 
-void dealloc_data_block(struct inode *in, uint8_t *map)
+void dealloc_data_block(struct inode *in, uint8_t *map, int fd, size_t size)
 {
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
 
+    // Verrouiller l'inode
+  int inode_offset = (1 + nb1) * 4096 + (int64_t)(in - (struct inode *)map);
+  if (lock_block(fd, inode_offset, F_WRLCK) < 0)
+  {
+    print_error("Erreur lors du verrouillage de l'inode");
+    close_fs(fd, map, size);
+    return;
+  }
+
   for (int i = 0; i < 900; i++)
   {
-    if ((int32_t)FROM_LE32(in->direct_blocks[i]) >= 0)
+    int32_t b = FROM_LE32(in->direct_blocks[i]);
+    if (b < 0)
+      break;
+    if (lock_block(fd, b * 4096, F_WRLCK) < 0)
     {
-      struct data_block *db = get_data_block(map, in->direct_blocks[i]);
-      db->type = TO_LE32(4);
-      calcul_sha1(db->data, 4000, db->sha1);
-      bitmap_dealloc(map, in->direct_blocks[i]);
-      in->direct_blocks[i] = TO_LE32(-1);
-      incremente_lbl(map);
+      print_error("Erreur lors du verrouillage d'un bloc de données");
+      unlock_block(fd, inode_offset);
+      close_fs(fd, map, size);
+      return;
     }
+    struct data_block *db = get_data_block(map, in->direct_blocks[i]);
+    db->type = TO_LE32(4);
+    calcul_sha1(db->data, 4000, db->sha1);
+    bitmap_dealloc(map, in->direct_blocks[i]);
+    in->direct_blocks[i] = TO_LE32(-1);
+    incremente_lbl(map);
+    unlock_block(fd, b * 4096);
   }
   if ((int32_t)FROM_LE32(in->double_indirect_block) >= 0)
   {
@@ -339,33 +357,53 @@ void dealloc_data_block(struct inode *in, uint8_t *map)
     {
       for (int i = 0; i < 1000; i++)
       {
-        if (dbl->addresses[i] < 0)
-          continue;
+        int32_t db2 = FROM_LE32(dbl->addresses[i]);
+        if (db2 < 0)
+          break;
+        if (lock_block(fd, db2 * 4096, F_WRLCK) < 0)
+        {
+          print_error("Erreur lors du verrouillage d'un bloc de données indirect");
+          unlock_block(fd, inode_offset);
+          close_fs(fd, map, size);
+          return;
+        }
         struct data_block *db = get_data_block(map, dbl->addresses[i]);
         db->type = TO_LE32(4);
         calcul_sha1(db->data, 4000, db->sha1);
         bitmap_dealloc(map, dbl->addresses[i]);
         dbl->addresses[i] = TO_LE32(-1);
         incremente_lbl(map);
+        unlock_block(fd, db2 * 4096);
       }
     }
     else
     {
       for (int i = 0; i < 1000; i++)
       {
-        if ((int32_t)FROM_LE32(dbl->addresses[i]) < 0)
+        int32_t db2 = FROM_LE32(dbl->addresses[i]);
+        if (db2 < 0)
           break;
-        struct address_block *sib = get_address_block(map, dbl->addresses[i]);
+        struct address_block *sib = get_address_block(map, db2);
         for (int j = 0; j < 1000; j++)
         {
-          if ((int32_t)FROM_LE32(sib->addresses[j]) < 0)
-            continue;
-          struct data_block *db = get_data_block(map, sib->addresses[j]);
+          int32_t db3 = FROM_LE32(sib->addresses[j]);
+          if (db3 < 0)
+            break;
+
+          if (lock_block(fd, db3 * 4096, F_WRLCK) < 0)
+          {
+            print_error("Erreur lors du verrouillage d'un bloc de données double indirect");
+            unlock_block(fd, inode_offset);
+            close_fs(fd, map, size);
+            return;
+          }
+          struct data_block *db = get_data_block(map, db3);
           db->type = TO_LE32(4);
           calcul_sha1(db->data, 4000, db->sha1);
           bitmap_dealloc(map, sib->addresses[j]);
           sib->addresses[j] = TO_LE32(-1);
           incremente_lbl(map);
+          unlock_block(fd, db3 * 4096);
         }
         sib->type = TO_LE32(4);
         calcul_sha1(sib->addresses, 4000, sib->sha1);
@@ -382,6 +420,24 @@ void dealloc_data_block(struct inode *in, uint8_t *map)
   in->double_indirect_block = TO_LE32(-1);
   in->file_size = TO_LE32(0);
   in->modification_time = TO_LE32(time(NULL));
+  calcul_sha1(in, 4000, in->sha1);
+
+  // Déverrouiller l'inode
+  unlock_block(fd, inode_offset);
+}
+
+void delete_inode(struct inode *in, uint8_t *map, int pos, int fd, size_t size)
+{
+  dealloc_data_block(in, map, fd, size);
+  in->flags = TO_LE32(0);
+  in->file_size = TO_LE32(0);
+  in->creation_time = TO_LE32(0);
+  in->access_time = TO_LE32(0);
+  in->modification_time = TO_LE32(0);
+  memset(in->filename, 0, sizeof(in->filename));
+  memset(in->extensions, 0, sizeof in->extensions);
+  bitmap_dealloc(map, pos);
+  decrement_nb_f(map);
   calcul_sha1(in, 4000, in->sha1);
 }
 
@@ -449,8 +505,10 @@ int create_directory_main(uint8_t *map, const char *dirname, int profondeur)
 
 int create_directory(uint8_t *map, char *dirname)
 {
-  char *token;
-  token = strtok(dirname, "/");
+  char *token = NULL;
+  char tmp[256];
+  strcpy(tmp, dirname);
+  token = strtok(tmp, "/"); 
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
   int cpt = 0;

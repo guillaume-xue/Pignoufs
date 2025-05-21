@@ -1,5 +1,13 @@
 #include "../include/commands.h"
 
+
+void print_usage()
+{
+  fprintf(stderr, "Usage: <nom_de_commande> <fsname> [options]\n");
+  fprintf(stderr, "Commandes disponibles : mkfs, ls, df, cp, rm, lock, chmod, cat, input, add, addinput, fsck, mount.\n");
+  fprintf(stderr, "Options disponibles : -v (verbose), -h (help), etc.\n");
+}
+
 int commands(int argc, char *argv[])
 {
   char *command = strrchr(argv[0], '/');

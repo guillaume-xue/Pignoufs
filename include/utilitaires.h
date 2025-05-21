@@ -57,9 +57,10 @@ int32_t alloc_data_block(uint8_t *map);
 
 void bitmap_dealloc(uint8_t *map, int32_t blknum);
 
-void dealloc_data_block(struct inode *in, uint8_t *map);
+void dealloc_data_block(struct inode *in, uint8_t *map, int fd, size_t size);
 
 int create_file(uint8_t *map, const char *filename);
+void delete_inode(struct inode *in, uint8_t *map, int pos, int fd, size_t size);
 
 int create_directory_main(uint8_t *map, const char *dirname, int profondeur);
 

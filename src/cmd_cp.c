@@ -261,7 +261,6 @@ static void copy_dossier_vers_externe(uint8_t *map, struct inode *in, const char
     perror("Erreur lors de la création du dossier externe");
     return;
   }
-
   char path[512];
   for (int i = 0; i < 900; i++)
   {
@@ -283,6 +282,20 @@ static void copy_dossier_vers_externe(uint8_t *map, struct inode *in, const char
       copy_fichier_vers_externe(map, child, path);
     }
   }
+}
+
+static void copy_dossier_vers_externe_main(uint8_t *map, struct inode *in, const char *dirname)
+{
+  // Créer le dossier externe
+  if (mkdir(dirname, 0755) < 0 && errno != EEXIST)
+  {
+    perror("Erreur lors de la création du dossier externe");
+    return;
+  }
+
+  char path[512];
+  snprintf(path, sizeof(path), "%s/%s", dirname, in->filename);
+  copy_dossier_vers_externe(map, in, path);
 }
 
 static void copy_fichier_vers_interne(uint8_t *map, struct inode *in, const char *filename)
@@ -396,26 +409,10 @@ int cmd_cp(const char *fsname, const char *filename1, const char *filename2, boo
     split_path(filename1, parent_path, dir_name);
     is_dir = is_folder_path(parent_path, dir_name);
   }
-  else
-  {
-    if (stat(filename1, &st) == -1)
-    {
-      close_fs(fd, map, size);
-      return print_error("Erreur: impossible d'accéder au fichier externe");
-    }
-  }
   if (mode2)
   {
     split_path(filename2, parent_path2, dir_name2);
     is_dir2 = is_folder_path(parent_path2, dir_name2);
-  }
-  else
-  {
-    if (stat(filename1, &st) == -1)
-    {
-      close_fs(fd, map, size);
-      return print_error("Erreur: impossible d'accéder au fichier externe");
-    }
   }
 
   if (mode1 && !mode2) // interne vers externe
@@ -459,15 +456,14 @@ int cmd_cp(const char *fsname, const char *filename1, const char *filename2, boo
         }
         in = get_inode(map, val);
       }
-
-      if ((in->flags) >> 5 & 1)
-      {
-        copy_dossier_vers_externe(map, in, filename1);
-      }
-      else
-      {
-        copy_fichier_vers_externe(map, in, filename1);
-      }
+    }
+    if (is_dir)
+    {
+      copy_dossier_vers_externe(map, in, filename2);
+    }
+    else
+    {
+      copy_fichier_vers_externe(map, in, filename2);
     }
   }
   else if (!mode1 && mode2) // externe vers interne
@@ -523,6 +519,12 @@ int cmd_cp(const char *fsname, const char *filename1, const char *filename2, boo
     {
       close_fs(fd, map, size);
       return print_error("Erreur: répertoire parent inexistant");
+    }
+
+    if (stat(filename1, &st) == -1)
+    {
+      close_fs(fd, map, size);
+      return print_error("Erreur: impossible d'accéder au fichier externe");
     }
 
     if (S_ISDIR(st.st_mode))

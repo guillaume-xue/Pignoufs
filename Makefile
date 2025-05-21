@@ -9,7 +9,7 @@ SOURCES = $(wildcard $(SRC_DIR)/*.c)
 INCLUDES = $(wildcard include/*.h)
 
 # Exclure les fichiers avec un main indépendant
-MAIN_OBJS = main.o commands.o sha1.o \
+MAIN_OBJS = main.o commands.o sha1.o utilitaires.o \
 	cmd_add.o cmd_addinput.o cmd_cat.o cmd_chmod.o cmd_cp.o cmd_df.o cmd_find.o cmd_fsck.o cmd_grep.o cmd_input.o cmd_lock.o cmd_ls.o cmd_mkdir.o cmd_mkfs.o cmd_mv.o cmd_rm.o cmd_rmdir.o cmd_tree.o
 
 # Define executables and their dependencies
@@ -71,6 +71,6 @@ $(BIN_DIR):
 
 clean:
 	rm -rf $(BIN_DIR)
-	rm -f mkfs ls df cp rm lock chmod cat input add addinput fsck mount find grep mkdir rmdir tree mv *.txt test_*
+	rm -f mkfs ls df cp rm lock chmod cat input add addinput fsck mount find grep mkdir rmdir tree mv
 
 .PHONY: all clean links test

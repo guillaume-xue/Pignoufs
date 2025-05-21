@@ -213,9 +213,9 @@ void TEST_FIND()
     return;
   }
   write_external_file(file_in_dir, content);
-  if (cmd_add(fsname, file_in_dir, file_in_dir) != 0)
+  if (cmd_cp(fsname, file_in_dir, file_in_dir, false, false) != 0)
   {
-    printf("[FAIL] cmd_add fichier dans dossier\n");
+    printf("[FAIL] cmd_cp fichier dans dossier\n");
     unlink(fsname);
     unlink(file1);
     unlink(file2);
@@ -908,8 +908,8 @@ void TEST_MV_DIR()
 {
   printf("=== Test cmd_mv sur dossier vide ===\n");
   const char *fsname = "test_mvdir_fs";
-  const char *dir1 = "dossier1";
-  const char *dir2 = "dossier2";
+  const char *dir1 = "dossier1/";
+  const char *dir2 = "dossier2/";
 
   // Nettoyage préalable
   unlink(fsname);
@@ -922,13 +922,13 @@ void TEST_MV_DIR()
   }
 
   // 2. Créer deux dossiers
-  if (cmd_mkdir(fsname, (char *)dir1) != 0)
+  if (cmd_mkdir(fsname, dir1) != 0)
   {
     printf("[FAIL] cmd_mkdir pour %s\n", dir1);
     unlink(fsname);
     return;
   }
-  if (cmd_mkdir(fsname, (char *)dir2) != 0)
+  if (cmd_mkdir(fsname, dir2) != 0)
   {
     printf("[FAIL] cmd_mkdir pour %s\n", dir2);
     unlink(fsname);
@@ -936,7 +936,7 @@ void TEST_MV_DIR()
   }
 
   // 3. Renommer dossier1 en dossier1_renamed
-  const char *dir1_renamed = "dossier1_renamed";
+  const char *dir1_renamed = "dossier1_renamed/";
   if (cmd_mv(fsname, dir1, dir1_renamed) != 0)
   {
     printf("[FAIL] cmd_mv pour dossier vide\n");

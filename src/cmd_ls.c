@@ -54,40 +54,58 @@ int cmd_ls(const char *fsname, const char *filename, const char *argument)
   {
     char parent_path[256], dir_name[256];
     split_path(filename, parent_path, dir_name);
-    int val = find_inode_folder(map, nb1, nbi, parent_path);
-    struct inode *in = get_inode(map, val);
-    if (in == NULL)
+    bool is_dir = is_folder_path(parent_path, dir_name);
+    int val = -1;
+    struct inode *in = NULL;
+
+    if (is_dir)
     {
-      close_fs(fd, map, size);
-      return print_error("Erreur: le répertoire n'existe pas");
-    }
-    struct inode *file = NULL;
-    if (strlen(dir_name) == 0)
-    {
-      file = in;
-    }
-    else
-    {
-      val = find_file_folder_from_inode(map, in, dir_name, false);
+      val = find_inode_folder(map, nb1, nbi, parent_path);
       if (val == -1)
       {
         close_fs(fd, map, size);
-        return print_error("Erreur: le fichier n'existe pas");
+        return print_error("Erreur: le répertoire parent n'existe pas");
       }
-      file = get_inode(map, val);
-      if (file == NULL)
+      in = get_inode(map, val);
+    }
+    else
+    {
+      if (strlen(parent_path) == 0)
       {
-        close_fs(fd, map, size);
-        return print_error("Erreur: le fichier n'existe pas");
+        val = find_inode_racine(map, nb1, nbi, dir_name, false);
+        if (val == -1)
+        {
+          close_fs(fd, map, size);
+          return print_error("Erreur: le fichier n'existe pas");
+        }
+        in = get_inode(map, val);
+      }
+      else
+      {
+        val = find_inode_folder(map, nb1, nbi, parent_path);
+        if (val == -1)
+        {
+          close_fs(fd, map, size);
+          return print_error("Erreur: le répertoire parent du fichier n'existe pas");
+        }
+        in = get_inode(map, val);
+        val = find_file_folder_from_inode(map, in, dir_name, false);
+        if (val == -1)
+        {
+          close_fs(fd, map, size);
+          return print_error("Erreur: le fichier n'existe pas");
+        }
+        in = get_inode(map, val);
       }
     }
-    if ((file->flags >> 5) & 1)
+
+    if (FROM_LE32(in->flags >> 5) & 1)
     {
       for (int i = 0; i < 900; i++)
       {
-        if (file->direct_blocks[i] != -1)
+        if (in->direct_blocks[i] != -1)
         {
-          struct inode *child_inode = get_inode(map, FROM_LE32(file->direct_blocks[i]));
+          struct inode *child_inode = get_inode(map, FROM_LE32(in->direct_blocks[i]));
           if (child_inode->flags & 1)
           {
             if (argument != NULL)
@@ -111,12 +129,12 @@ int cmd_ls(const char *fsname, const char *filename, const char *argument)
       {
         if (strcmp(argument, "-l") == 0)
         {
-          print_ls(file);
+          print_ls(in);
         }
       }
       else
       {
-        printf("%s%s\n", file->filename, ((FROM_LE32(file->flags) >> 5) & 1) ? "/" : "");
+        printf("%s%s\n", in->filename, ((FROM_LE32(in->flags) >> 5) & 1) ? "/" : "");
       }
     }
   }

@@ -1,23 +1,7 @@
 #include "../include/structures.h"
 #include "../include/utilitaires.h"
 
-static void delete_inode(struct inode *in, uint8_t *map, int pos)
-{
-  dealloc_data_block(in, map);
-  in->flags = TO_LE32(0);
-  in->file_size = TO_LE32(0);
-  in->creation_time = TO_LE32(0);
-  in->access_time = TO_LE32(0);
-  in->modification_time = TO_LE32(0);
-  memset(in->filename, 0, sizeof(in->filename));
-  memset(in->extensions, 0, sizeof in->extensions);
-  bitmap_dealloc(map, pos);
-  decrement_nb_f(map);
-  calcul_sha1(in, 4000, in->sha1);
-  in->type = TO_LE32(3);
-}
-
-void delete_children(struct inode *dir, uint8_t *map)
+void delete_children(struct inode *dir, uint8_t *map, int fd, size_t size)
 {
   int32_t nb1, nbi, nba, nbb;
   get_conteneur_data(map, &nb1, &nbi, &nba, &nbb);
@@ -30,9 +14,9 @@ void delete_children(struct inode *dir, uint8_t *map)
     if ((FROM_LE32(child->flags) >> 5) & 1)
     {
       // Si c'est un sous-répertoire, suppression récursive
-      delete_children(child, map);
+      delete_children(child, map, fd, size);
     }
-    delete_inode(child, map, child_idx);
+    delete_inode(child, map, child_idx, fd, size);
     dir->direct_blocks[i] = TO_LE32(-1);
   }
   calcul_sha1(dir, 4000, dir->sha1);
@@ -68,8 +52,8 @@ boucle:
       return print_error("Erreur: répertoire inexistant");
     }
     in = get_inode(map, val);
-    delete_children(in, map);
-    delete_inode(in, map, val);
+    delete_children(in, map, fd, size);
+    delete_inode(in, map, val, fd, size);
   }
   else if (strlen(parent_path) > 0 && strlen(dir_name) > 0)
   {
@@ -87,8 +71,8 @@ boucle:
       return print_error("Erreur: répertoire à supprimer inexistant");
     }
     in2 = get_inode(map, val2);
-    delete_children(in2, map);
-    delete_inode(in2, map, val2);
+    delete_children(in2, map, fd, size);
+    delete_inode(in2, map, val2, fd, size);
     delete_separte_inode(in, val2);
   }
   else

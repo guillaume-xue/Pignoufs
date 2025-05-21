@@ -49,6 +49,12 @@ int cmd_cat(const char *fsname, const char *filename)
     in = get_inode(map, val);
   }
 
+  if(!((in->flags >> 1) & 1) || ((in->flags >> 3) & 1))
+  {
+    print_error("Erreur: pas de droit de lecture/fichier locké");
+    close_fs(fd, map, size);
+    return 1;
+  }
   uint32_t file_size = FROM_LE32(in->file_size);
   uint32_t remaining_data = file_size;
 
