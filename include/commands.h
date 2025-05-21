@@ -2,6 +2,6 @@
 #define COMMANDS_H
 
 void print_usage(void);
-void commands(int argc, char *argv[]);
+int commands(int argc, char *argv[]);
 
 #endif
