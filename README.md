@@ -1,93 +1,165 @@
-# XUE-YU-psa-2025
+# pignoufs — Système de fichiers
 
+**Pignoufs** (Projet Informatique de Gestation d’un Nouvel Outil Ultravérifié de File System), un mini-système de fichiers contenu dans un seul fichier conteneur. Ce conteneur est manipulé via des lignes de commande (`pignoufs <commande> <conteneur> [...]`) qui reproduisent des commandes de base comme `ls`, `cp`, `rm`, `fsck`, etc. L'accès interne au conteneur se fait par projection mémoire (`mmap`) — les accès via `read`/`write` classiques ne sont pas utilisés par conception.
 
+---
 
-## Getting started
+## Objectifs
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+* Fournir un système de fichiers stocké dans un seul fichier (le *conteneur*).
+* Garantir l'intégrité des blocs grâce à un SHA-1 par bloc.
+* Proposer des commandes pour créer, lister, lire, écrire, supprimer et vérifier le système de fichiers.
+* Gérer la concurrence avec un mécanisme de verrouillage (au minimum global, extensible par bloc ou inode).
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+---
 
-## Add your files
+## Caractéristiques essentielles
 
-- [ ] [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-- [ ] [Add files using the command line](https://docs.gitlab.com/ee/gitlab-basics/add-file.html#add-a-file-using-the-command-line) or push an existing Git repository with the following command:
+* **Accès via mmap** : le conteneur est projeté en mémoire pour toutes les opérations.
+* **Intégrité** : chaque bloc contient un SHA-1 des 4000 octets de données pour détecter toute corruption.
+* **Bloc physique** : 4096 octets (4 KiB) composés de :
+
+  * 4000 octets de contenu effectif
+  * 20 octets : SHA-1
+  * 4 octets : type de bloc
+  * 72 octets : espace réservé (verrouillage / métadonnées)
+* **Types de blocs** : superbloc, bitmap, inode, bloc libre, bloc de données, indirection simple, indirection double.
+* **Noms internes** : les fichiers internes du conteneur commencent par `//` (ex. `//toto.txt`).
+* **Endianness** : entier de 4 octets en little-endian.
+
+---
+
+## Interface
 
 ```
-cd existing_repo
-git remote add origin https://moule.informatique.univ-paris-diderot.fr/yu/xue-yu-psa-2025.git
-git branch -M main
-git push -uf origin main
+pignoufs <commande> <conteneur> [options]
 ```
 
-## Integrate with your tools
+Commandes implémentées ou attendues :
 
-- [ ] [Set up project integrations](https://moule.informatique.univ-paris-diderot.fr/yu/xue-yu-psa-2025/-/settings/integrations)
+* `mkfs` : créer un conteneur neuf (`pignoufs mkfs <conteneur> <nb_i> <nb_a>`)
+* `ls`   : lister fichiers (comportement similaire à `ls`, options comme `-l`)
+* `df`   : afficher l'espace libre (en blocs de 4 KiB)
+* `cp`   : copier depuis/vers le conteneur et en interne
+* `rm`   : supprimer un fichier
+* `lock` : prendre un verrou lecture/écriture sur une ressource interne
+* `chmod`: modifier les droits (flags lecture/écriture)
+* `cat`  : afficher le contenu d'un fichier interne
+* `input` / `add` : écrire ou concaténer des données depuis l'entrée standard
+* `fsck` : vérifier l'intégrité (magic, SHA-1, cohérence)
+* `mount` / `umount` : optionnels selon l'implémentation
 
-## Collaborate with your team
+Chaque commande traite proprement les erreurs et affiche des messages explicites sur la sortie d'erreur.
 
-- [ ] [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-- [ ] [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-- [ ] [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-- [ ] [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-- [ ] [Set auto-merge](https://docs.gitlab.com/ee/user/project/merge_requests/merge_when_pipeline_succeeds.html)
+---
 
-## Test and Deploy
+## Format physique
 
-Use the built-in continuous integration in GitLab.
+Le conteneur est organisé en 4 zones contiguës :
 
-- [ ] [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/index.html)
-- [ ] [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-- [ ] [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-- [ ] [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-- [ ] [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+1. Superbloc (1 bloc)
+2. Bitmaps des blocs libres (nb1 blocs)
+3. Inodes (nbi blocs, 1 inode par bloc)
+4. Blocs allouables (nba blocs)
 
-***
+Calcul : `nbb = 1 + nb1 + nbi + nba`. Taille du conteneur = `4096 * nbb`.
 
-# Editing this README
+### Inode
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
+Chaque inode occupe un bloc (4000 octets utiles) et contient entre autres :
 
-## Suggestions for a good README
+* flags (existence, droits lecture/écriture, verrous, type répertoire)
+* taille du fichier, dates (création / accès / modification)
+* nom du fichier (256 octets, max 255 octets utiles)
+* 900 adresses de blocs (valeur `-1` si non utilisée)
+* numéro du bloc d'indirection double (ou `-1`)
+* zone d'extension (120 octets)
 
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
+---
 
-## Name
-Choose a self-explaining name for your project.
+## Intégrité & vérification
 
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
+* Avant de lire un bloc, le SHA-1 est vérifié ; après chaque écriture, le SHA-1 est mise à jour.
+* La commande `fsck` vérifie :
 
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
+  * le magic number du superbloc
+  * les hashes de tous les blocs
+  * la cohérence entre bitmaps et inodes (blocs alloués vs libres)
 
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
+Un outil de corruption peut être utilisé pour injecter des erreurs et tester `fsck`.
 
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
+---
 
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
+## Concurrence & verrouillage
 
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
+* Au minimum un verrou global est implémenté (mutex sur l'ensemble du conteneur).
+* Il est possible d'étendre le mécanisme à un verrou par bloc ou par inode (lecture/écriture) pour améliorer la concurrence.
+* Les verrous doivent être libérés proprement en cas d'exception ou de signal (`SIGTERM`, `SIGINT`).
 
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
+---
 
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
+## Compilation
 
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
+**Prérequis** : `gcc`, `make`, `libpthread`, `libcrypto`, `pkg-config`, `openssl`.
 
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
+Exemple minimal :
 
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
+```bash
+make
+```
 
-## License
-For open source projects, say how it is licensed.
+Le projet produit un exécutable `pignoufs` (ou plusieurs binaires selon l'implémentation).
 
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+---
+
+## Exemples d'utilisation
+
+Créer un système de fichiers :
+
+```bash
+./pignoufs mkfs conteneur 128 1024
+```
+
+Lister les fichiers :
+
+```bash
+./pignoufs ls conteneur
+```
+
+Copier un fichier local dans le conteneur :
+
+```bash
+./pignoufs cp conteneur monfichier.txt //monfichier.txt
+```
+
+Extraire un fichier du conteneur :
+
+```bash
+./pignoufs cp conteneur //monfichier.txt sortie.txt
+```
+
+Vérifier le système :
+
+```bash
+./pignoufs fsck conteneur
+```
+
+Prendre un verrou en écriture :
+
+```bash
+./pignoufs lock conteneur //monfichier.txt w
+```
+
+---
+
+## Limitations connues
+
+* Le format suppose une architecture little-endian et des entiers 4 octets.
+* Taille d'un bloc utile = 4000 octets ; un bloc physique = 4096 octets.
+* L'intégrité dépend du SHA-1 ; sans l'implémentation des hashes l'intégrité n'est pas garantie.
+
+---
+
+## Licence
+
+Ce dépôt public est distribué sous licence MIT — voir `LICENSE` pour les détails.
